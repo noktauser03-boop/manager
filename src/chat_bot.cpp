@@ -73,7 +73,7 @@ class Controller {
     double now_ = 0;
     std::deque<Pending> pending;
     std::deque<std::string> outbox, recent_sent; // gönderilecek parçalar; kendi yolladıklarımız (yankı koruması)
-    bool enabled = false, baseline = false, voice_routed=false, cool = true;
+    bool enabled = false, baseline = false, voice_routed=false, voice_announced=false, cool = true;
     std::unordered_map<std::string,bool> delegate_hosts;
     std::string delegate_name;std::deque<std::pair<std::string,std::string>> delegate_outbox;
     double delegate_since = 0;
@@ -116,17 +116,20 @@ class Controller {
     std::string status_model;
     void ClearStatus(){++status_revision;status_lines.clear();status_room=0;}
     void QueueStatus(chat_bot_fx::Event event,const std::string& detail={},int explicit_active=-1) {
-        ++status_revision;
-        if(!cool){ClearStatus();return;}
-        if(!chat_send_gate::status_alias_ready.load(std::memory_order_acquire)){
-            ClearStatus();Status(u8"AI | System sohbet etiketi hazır değil; terminal gösterimi atlandı.");return;
-        }
+        if(!cool||!active_room)return;
         const auto lines=chat_bot_fx::Lines(event,detail,explicit_active>=0 ? (explicit_active==1) : (enabled||voice_ai_bridge::Read().settings.enabled));
-        // Do not interrupt startup with the first model notification.
-        if(event==chat_bot_fx::Event::Model&&!status_lines.empty()&&status_room==active_room){
-            if(status_lines.size()+lines.size()<=80)status_lines.insert(status_lines.end(),lines.begin(),lines.end());
-        }else status_lines.assign(lines.begin(),lines.end());
-        status_next=now_;status_deadline=now_+chat_bot_fx::kTimeout;status_room=active_room;
+        if(status_room!=active_room)ClearStatus();
+        // Keep transitions in order. Never replace a partially sent sequence.
+        // Bound decorative traffic; keep the newest final state if saturated.
+        constexpr size_t max_lines=80;
+        if(status_lines.size()+lines.size()>max_lines){
+            if(event==chat_bot_fx::Event::Model||event==chat_bot_fx::Event::Profile)return;
+            ClearStatus();
+        }
+        const bool was_empty=status_lines.empty();
+        ++status_revision;status_lines.insert(status_lines.end(),lines.begin(),lines.end());
+        if(was_empty)status_next=now_;
+        status_deadline=now_+chat_bot_fx::kTimeout;status_room=active_room;
     }
     bool SendStatusLine(const std::string& line) {
         if(!chat_send_gate::status_alias_ready.load(std::memory_order_acquire))return false;
@@ -143,12 +146,31 @@ class Controller {
         Root text(api,reinterpret_cast<Object*>(api.string_new(line.c_str())));
         if(!text.Get())return false;
         void* args[]={text.Get()};api.Call(input_set,input.Get(),args,&ok);
-        if(!ok)return false;
+        if(!ok){
+            // The input was empty before this attempt; clean up a partially
+            // applied setter rather than leave the queue blocked by our text.
+            bool read_ok=false;const auto partial=ReadString(input_text,input.Get(),read_ok);
+            if(read_ok&&!partial.empty()){
+                Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
+                if(empty.Get())api.Call(input_set,input.Get(),reset);
+            }
+            BOT_LOG("GMM_DIAG cool status setter failed");
+            return true;
+        }
         const auto applied=ReadString(input_text,input.Get(),ok);
-        if(!ok||applied!=line)return false;
+        if(!ok||applied!=line){
+            // TMP may normalize rich text or reject the assigned value. Never
+            // leave a bot-owned fragment in the input and block the entire queue.
+            if(ok&&!applied.empty()){
+                Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
+                if(empty.Get())api.Call(input_set,input.Get(),reset);
+            }
+            BOT_LOG("GMM_DIAG cool status line rejected before send");
+            return true; // discard the invalid decorative line, not later status lines
+        }
         // This guard exists only around this one status SendMessage call. No
         // timer is disabled and normal replies never receive an override.
-        bool sent=false;
+        bool sent=false,attempted=false;
         {
             struct Permission {
                 const Api& api;Object* owner;Field* field;bool old,changed=false;
@@ -159,6 +181,7 @@ class Controller {
             } permission(api,owner.Get(),allowed_field,allowed);
             bool permitted=false;api.field_get_value(owner.Get(),allowed_field,&permitted);
             if(permitted){
+                attempted=true;
                 chat_send_gate::AutomaticSend automatic;
                 chat_send_gate::StatusAlias display(alias.handle);
                 api.Call(send,owner.Get(),nullptr,&sent);
@@ -170,15 +193,25 @@ class Controller {
             if(empty.Get()) {
                 api.Call(input_set,input.Get(),reset);
             }
-            return false;
+            if(attempted)BOT_LOG("GMM_DIAG cool status input retained after send; no duplicate retry");
+            return attempted;
         }
-        if(!sent||!read_ok)return false;
+        if(!sent||!read_ok||!after.empty()){
+            // A managed call may already have dispatched the message. Do not
+            // retry an ambiguous invocation, which can produce duplicates.
+            if(read_ok&&!after.empty()){
+                Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
+                if(empty.Get())api.Call(input_set,input.Get(),reset);
+            }
+            BOT_LOG("GMM_DIAG cool status send unconfirmed");
+            return true;
+        }
         recent_sent.push_back(chat_bot_core::StripTags(line));while(recent_sent.size()>12)recent_sent.pop_front();
         return true;
     }
     void PumpStatus(double now) {
         if(status_lines.empty())return;
-        if(now>status_deadline){ClearStatus();return;}
+        if(now>status_deadline){BOT_LOG("GMM_DIAG cool status queue expired (%zu remaining)",status_lines.size());ClearStatus();return;}
         if(now<status_next)return;
         if((!outbox.empty()||!delegate_outbox.empty())&&now>=gap_until)return;
         if(!api.Value<bool>(queue,nullptr,false))return;
@@ -611,7 +644,6 @@ class Controller {
             if(dev_lock.Unlocked() && photo_gate.SetReceiving(!photo_gate.Receiving()))photo_status=photo_gate.Receiving()?u8"Fotoğraf alma modu AÇIK; gelen teklifler ayrıca onaylanacak.":u8"Fotoğraf alma modu kapalı.";
             else photo_status=u8"Alma modundan önce alıcı şifresini doğrula.";
         }
-        if(c.voice_fx)QueueStatus(c.voice_fx_on?chat_bot_fx::Event::Start:chat_bot_fx::Event::Stop,engine.Model(),c.voice_fx_on?1:0);
         if (c.reset_memory) { InvalidateReplies(); history.clear(); Status(u8"AI | Hafıza sıfırlandı."); }
         if (c.refresh) next_players = 0;
         if (c.edit != Edit::None) BeginEdit(c.edit);
@@ -640,18 +672,15 @@ public:
         bool ok = false;
         auto* running = api.Call(queue, nullptr, nullptr, &ok);
         if (!ok || !running || !*static_cast<bool*>(api.object_unbox(running))) { return; } // sahne yükleniyor
-        Commands(); PollEdit();
-        voice_ai_bridge::Configure({key,System(),own_name,all,strict,selected,message_filter});
-        const bool route_voice=voice_ai_bridge::RoutesText();
-        if(enabled&&voice_ai_bridge::Read().settings.enabled){enabled=false;InvalidateReplies();ClearStatus();Status(u8"AI | Sesli AI açıldı; Metin AI kapatıldı.");}
-        if(route_voice!=voice_routed){InvalidateReplies();baseline=false;voice_routed=route_voice;}
 
         Root current_room(api, api.Call(room));
         if(current_room.Get()&&room_name_get){bool room_ok=false;const auto value=ReadString(room_name_get,current_room.Get(),room_ok);if(room_ok)snap.room_name=value;}
         else snap.room_name.clear();
         if(!current_room.Get()){
             logged_room=0;logged_ids.clear();next_chat_log=0;snap.raw_messages.clear();
-            ClearStatus();
+            ClearStatus();voice_announced=false;active_room=0;
+            Commands();PollEdit();
+            voice_ai_bridge::Configure({key,System(),own_name,all,strict,selected,message_filter});
             snap.players.clear();snap.delegate_players.clear();snap.room_name.clear();delegate_name.clear();delegate_outbox.clear();reminder.Reset();active_room=0;
             if(enabled){enabled=false;InvalidateReplies();Status(u8"AI | Odadan çıkıldı; bot kapatıldı.");}
             else DropOutbox();
@@ -661,11 +690,18 @@ public:
         // saved value is never dereferenced or sent across threads.
         const auto room_id=reinterpret_cast<uintptr_t>(current_room.Get());
         if(active_room&&active_room!=room_id){
-            ClearStatus();delegate_outbox.clear();delegate_name.clear();
+            ClearStatus();voice_announced=false;delegate_outbox.clear();delegate_name.clear();
             InvalidateReplies();reminder.Reset();baseline=false;seen.clear();logged_ids.clear();
             engaged.clear();talking.clear();last_accept.clear();last_smalltalk.clear();last_warning.clear();next_warning=0;history.clear();
         }
         active_room=room_id;
+        Commands();PollEdit();
+        voice_ai_bridge::Configure({key,System(),own_name,all,strict,selected,message_filter});
+        const bool voice_on=voice_ai_bridge::Read().settings.enabled;
+        const bool route_voice=voice_ai_bridge::RoutesText();
+        if(enabled&&voice_on){enabled=false;InvalidateReplies();reminder.Reset();QueueStatus(chat_bot_fx::Event::Stop);Status(u8"AI | Sesli AI açıldı; Metin AI kapatıldı.");}
+        if(voice_on!=voice_announced){voice_announced=voice_on;QueueStatus(voice_on?chat_bot_fx::Event::VoiceStart:chat_bot_fx::Event::VoiceStop,{},voice_on?1:0);}
+        if(route_voice!=voice_routed){InvalidateReplies();baseline=false;voice_routed=route_voice;}
         LogVisibleChat(room_id);
         if(!delegate_name.empty()&&std::find(snap.delegate_players.begin(),snap.delegate_players.end(),delegate_name)==snap.delegate_players.end()&&now>=next_players){delegate_name.clear();delegate_outbox.clear();}
         if (now >= next_players) { next_players = now + 1.0; Players(); }

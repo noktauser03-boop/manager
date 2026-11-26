@@ -4,7 +4,6 @@
 #include "voice_ai_bridge.h"
 #include "message_gate.h"
 #include "seda_asr.h"
-#include "voice_ai_fx.h"
 #include <cmath>
 #include <cstring>
 #include <deque>

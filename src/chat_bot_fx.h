@@ -3,13 +3,14 @@
 #include <string>
 #include <vector>
 namespace chat_bot_fx {
-enum class Event { Start, Stop, Profile, Model };
+enum class Event { Start, Stop, Profile, Model, VoiceStart, VoiceStop };
 inline constexpr double kInterval=1.0/6.0,kTimeout=20.0;
 // Decorative terminal text only: never publish actual classes, APIs or provider IDs.
 inline std::vector<std::string> Lines(Event event,const std::string& detail,bool enabled) {
     std::vector<std::string> lines={std::string("<#888F>")+chat_shortcut::kPayload};
     auto add=[&](const std::string& text){lines.push_back("<#EEEF>"+text);};
     switch(event){
+    case Event::VoiceStart:
     case Event::Start:
         add("root@aurora:~# install -d /run/aurora/staging /run/aurora/cache /run/aurora/session");
         add("root@aurora:~# cmake -S /opt/aurora-console -B /run/aurora/staging -G Ninja -DCMAKE_BUILD_TYPE=Release");
@@ -33,7 +34,8 @@ inline std::vector<std::string> Lines(Event event,const std::string& detail,bool
         add("[  OK  ] Initialized session context; text pipeline ready; expression profile synchronized");
         add("root@aurora:~# auroractl start dialogue.service && auroractl wait --ready --timeout 30");
         add("[  OK  ] dialogue.service entered ready state; console input accepted; startup sequence complete");
-        add(u8"[ SİSTEM ÇIKTISI ] AI AKTİF");break;
+        add(event==Event::VoiceStart?u8"[ SİSTEM ÇIKTISI ] SESLİ SOHBET AI AÇILDI":u8"[ SİSTEM ÇIKTISI ] AI AÇILDI");break;
+    case Event::VoiceStop:
     case Event::Stop:
         add("root@aurora:~# auroractl session close --graceful --drain-queue --preserve-profile");
         add("[ INFO ] Shutdown transaction opened; console admission closed; pending work marked for drain");
@@ -51,7 +53,7 @@ inline std::vector<std::string> Lines(Event event,const std::string& detail,bool
         add("root@aurora:~# auroractl session finalize --state offline --reason user-request");
         add("[  OK  ] Shutdown transaction committed; session state changed from stopping to offline");
         add("[ INFO ] Console shutdown complete; waiting for the next manual activation");
-        add(u8"[ SİSTEM ÇIKTISI ] AI KAPANDI");break;
+        add(event==Event::VoiceStop?u8"[ SİSTEM ÇIKTISI ] SESLİ SOHBET AI KAPANDI":u8"[ SİSTEM ÇIKTISI ] AI KAPANDI");break;
     case Event::Profile:{
         add("root@aurora:~# auroractl profile prepare --transaction --checkpoint /run/persona.previous");
         add("[  OK  ] Profile checkpoint created; current expression rules preserved until commit");

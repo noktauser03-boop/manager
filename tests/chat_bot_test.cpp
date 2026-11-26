@@ -257,7 +257,7 @@ int main() {
     clock.Update(300,false,true,2,"YeniBot",true);assert(!clock.Due(10000));
     clock.Update(301,true,true,0,"YeniBot",true);assert(!clock.Due(10000));
     clock.Update(302,true,true,2,"",true);assert(!clock.Due(10000));
-    for(auto event:{chat_bot_fx::Event::Start,chat_bot_fx::Event::Stop,chat_bot_fx::Event::Profile,chat_bot_fx::Event::Model}){
+    for(auto event:{chat_bot_fx::Event::Start,chat_bot_fx::Event::Stop,chat_bot_fx::Event::Profile,chat_bot_fx::Event::Model,chat_bot_fx::Event::VoiceStart,chat_bot_fx::Event::VoiceStop}){
         const auto lines=chat_bot_fx::Lines(event,"test-model",true);
         assert(lines.size()>=18&&lines.size()<=24&&lines.front()==std::string("<#888F>")+chat_shortcut::kPayload);
         assert((lines.size()-1)*chat_bot_fx::kInterval<chat_bot_fx::kTimeout);

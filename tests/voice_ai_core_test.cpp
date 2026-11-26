@@ -5,7 +5,6 @@ using namespace voice_ai_core;
 namespace {
 // Speech-like 20 ms frames: harmonic voice with a syllable-rate envelope.
 std::vector<float> VoiceFrame(int frame,int rate=16000){std::vector<float> f(rate/50);for(size_t i=0;i<f.size();++i){const double t=(double(frame)*f.size()+i)/rate,env=.04+.2*std::fabs(std::sin(2*3.14159265*3*t));f[i]=float(env*(std::sin(2*3.14159265*140*t)+.5*std::sin(2*3.14159265*280*t)+.3*std::sin(2*3.14159265*420*t))/1.6);}return f;}
-double Pitch(const std::vector<float>& s,int rate,double lo=60,double hi=400){const size_t at=s.size()/2-4096,n=8192;double best=-1e300;int lag=0;for(int l=int(rate/hi);l<=int(rate/lo);++l){double d=0;for(size_t i=0;i<n;++i)d+=double(s[at+i])*s[at+i+l];if(d>best){best=d;lag=l;}}return double(rate)/lag;}
 std::shared_ptr<std::atomic<bool>> cancel_after_http;int calls=0;bool fail_tts=false;std::string asr_text="Bot kapı nerede?";std::vector<std::string> requests;
 std::string LocalAsr(const std::vector<float>& pcm){assert(!pcm.empty());return asr_text;}
 bool Http(const std::string& url,const std::string& key,const std::string& body,int& code,std::string& response){
@@ -55,19 +54,6 @@ int main(){
  // --- Requests queued while the AI is busy merge into one clip (max 12 s) ---------------------------------
  {Request a,b;a.actor=b.actor=4;a.epoch=b.epoch=1;a.room=b.room=9;a.pcm.assign(16000*3,.1f);b.pcm.assign(16000*2,.1f);assert(Merge(a,b)&&a.pcm.size()==16000*5+4800);
   Request c=a;c.actor=5;assert(!Merge(a,c));Request big;big.actor=4;big.epoch=1;big.room=9;big.pcm.assign(16000*8,.1f);assert(!Merge(a,big));}
- // --- Deep robotic voice: pitch drops by kPitchRatio, duration and level stay sane ------------------------------
- {const int rate=24000;std::vector<float> v(rate*2);for(size_t i=0;i<v.size();++i){const double t=double(i)/rate;v[i]=float(.3*std::sin(2*3.14159265*220*t)+.15*std::sin(2*3.14159265*440*t)+.1*std::sin(2*3.14159265*660*t));}
-  const auto low=voice_fx::PitchDown(v,rate);assert(low.size()>=v.size()*.95&&low.size()<=v.size()+rate/10+1);const double hz=Pitch(low,rate);assert(hz>220*.62*.92&&hz<220*.62*1.08);
-  auto robot=v;voice_fx::DeepRobot(robot,rate);float peak=0;for(float f:robot){assert(std::isfinite(f));peak=std::max(peak,std::fabs(f));}assert(peak>.85f&&peak<=.91f&&robot.size()>=v.size()*.95&&robot.size()<=v.size()+rate/10+1);
-  std::vector<float> tiny(50,.2f);voice_fx::DeepRobot(tiny,rate);assert(!tiny.empty());std::vector<float> none;voice_fx::DeepRobot(none,rate);assert(none.empty());}
-
- // --- Tone slider: 0 = current deep robot, 100 = baby; pitch follows the slider, robot colour fades out ----------
- {using namespace voice_fx;assert(std::fabs(ToneRatio(0)-kPitchRatio)<1e-9&&std::fabs(ToneRatio(1)-kBabyRatio)<1e-9&&ToneRatio(.5)>ToneRatio(.25)&&RobotAmount(0)==1&&RobotAmount(1)==0&&RobotAmount(.4)>0&&RobotAmount(.4)<1);
-  const int rate=24000;std::vector<float> v(rate*2);for(size_t i=0;i<v.size();++i){const double t=double(i)/rate;v[i]=float(.3*std::sin(2*3.14159265*220*t)+.15*std::sin(2*3.14159265*440*t)+.1*std::sin(2*3.14159265*660*t));}
-  auto baby=v;DeepRobot(baby,rate,1.0);float peak=0;for(float f:baby){assert(std::isfinite(f));peak=std::max(peak,std::fabs(f));}assert(peak>.85f&&peak<=.91f&&baby.size()>=v.size()*.95&&baby.size()<=v.size()+rate/10+1);
-  const double hz=Pitch(baby,rate,220*kBabyRatio*.8,220*kBabyRatio*1.2);assert(hz>220*kBabyRatio*.92&&hz<220*kBabyRatio*1.08); // ~418 Hz: far higher than the 220 Hz input
-  auto mid=v;DeepRobot(mid,rate,.5);const double hm=Pitch(mid,rate,220*.7,220*1.6);assert(hm>220*ToneRatio(.5)*.92&&hm<220*ToneRatio(.5)*1.08);
-  auto same=v;DeepRobot(same,rate,0);assert(same.size()>=v.size()*.95);}
  // Myinstants parser: fixed host, traversal rejected.
  {auto sounds=myinstants::Parse(R"HTML(<button onclick="play('/media/sounds/vine.mp3','x')"></button><a class="instant-link">Vine &amp; Boom</a><button onclick="play('/media/sounds/%2e%2e.mp3')"></button>)HTML");assert(sounds.size()==1&&sounds[0].title=="Vine & Boom"&&myinstants::Encode("a b")=="a%20b"&&!myinstants::ValidPath("https://evil.example/a.mp3"));}
  // --- Own message: spoken directly (TTS + tone), zero HTTP / AI requests -------------------------------------------

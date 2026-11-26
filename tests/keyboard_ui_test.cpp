@@ -1,7 +1,6 @@
 #include "chat_bot_bridge.h"
 #include "photo_transport_bridge.h"
 #include "kick_bridge.h"
-#include "room_limit_bridge.h"
 #include "github_repo_status.h"
 #include "voice_ai_bridge.h"
 #include "keyboard_ui.h"
@@ -213,7 +212,7 @@ int main() {
     assert(found);}
    Direct("Manuel kelime seçimi: KAPALI");Frame();Frame();assert(voice_ai_bridge::desired.manual_keywords);
    Direct("Sesli AI: KAPALI - aç");Frame();Frame();assert(voice_ai_bridge::desired.enabled);
-   auto switching=chat_bot_bridge::Take();assert(switching.set_enabled&&!switching.enable&&switching.voice_fx&&switching.voice_fx_on);
+   auto switching=chat_bot_bridge::Take();assert(switching.set_enabled&&!switching.enable);
    Direct("Konuşmayı durdur");Frame();Frame();assert(voice_ai_bridge::cancel);
    voice_ai_bridge::PublishVoices({"tr-test-voice-a","tr-test-voice-b"},"tr-test-voice-a");voice_ai_bridge::ChooseVoice({});Frame();Frame();
    Direct("Ses türü: Otomatik (erkek varsa)");Frame();Frame();Direct("tr-test-voice-b");Frame();Frame();assert(voice_ai_bridge::PreferredVoice()=="tr-test-voice-b");
@@ -272,12 +271,7 @@ int main() {
     assert(Reveal("GitHub Kontrol"));Direct("GitHub Kontrol");Frame();Frame();
     assert(Reveal("Repo durumunu kontrol et"));Direct("Repo durumunu kontrol et");Frame();
     Click(u8"< Geliştirici");Frame();Frame();
-    room_limit_bridge::Snapshot rs;rs.ready=rs.in_room=rs.is_host=true;rs.generation=11;rs.count=4;rs.limit=20;rs.local_actor=rs.master_actor=1;
-    room_limit_bridge::Publish(rs);
-    assert(Reveal("Oyuncu Siniri"));Direct("Oyuncu Siniri");Frame();Frame();
-    assert(Reveal("Oyuncu sinirini uygula"));Direct("Oyuncu sinirini uygula");
-    auto limit_command=room_limit_bridge::Take();assert(limit_command.limit==20&&limit_command.generation==11);
-    room_limit_bridge::Publish({});
+    assert(!items.count("Oyuncu Siniri"));
     // Closing developer authentication must automatically hide the receiver screen.
     bot.developer_unlocked=false;chat_bot_bridge::Publish(bot);
     photo_transport_bridge::Publish({});Frame();Frame();

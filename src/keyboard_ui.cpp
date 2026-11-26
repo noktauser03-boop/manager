@@ -9,7 +9,6 @@
 #include "photo_transfer_bridge.h"
 #include "photo_transport_bridge.h"
 #include "kick_bridge.h"
-#include "room_limit_bridge.h"
 #include "github_repo_status.h"
 #include "storage_access.h"
 #include "voice_ai_bridge.h"
@@ -572,7 +571,7 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
     if(pending&&!had_pending&&g_bot_page==1)g_bot_page=6;
     had_pending=pending;
     // A stale open page must not survive a developer-session lock.
-    if((g_bot_page==10||g_bot_page==11||g_bot_page==12||g_bot_page==13)&&!s.developer_unlocked)g_bot_page=9;
+    if((g_bot_page==10||g_bot_page==11||g_bot_page==12)&&!s.developer_unlocked)g_bot_page=9;
     static int previous=-2;if(previous!=g_bot_page){ImGui::SetScrollY(0);previous=g_bot_page;}
     const float half=(content-ImGui::GetStyle().ItemSpacing.x)/2;
     if(g_bot_page<0){
@@ -584,7 +583,7 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
             ActionKey(labels[i],half,menu_height,[page=pages[i]]{g_bot_page=page;InvalidateKeys();});ImGui::PopID();}
         ImGui::TextWrapped("%s",chat_bot_core::PrefixScalars(s.status,65).c_str());return;
     }
-    ActionKey((g_bot_page==6||g_bot_page==7||g_bot_page==8||g_bot_page==15)?u8"< Sesli AI":((g_bot_page==10||g_bot_page==11||g_bot_page==12||g_bot_page==13)?u8"< Geliştirici":u8"< Genel AI menüsü"),content,key_height,[]{g_bot_page=(g_bot_page==6||g_bot_page==7||g_bot_page==8||g_bot_page==15)?1:((g_bot_page==10||g_bot_page==11||g_bot_page==12||g_bot_page==13)?9:-1);InvalidateKeys();});
+    ActionKey((g_bot_page==6||g_bot_page==7||g_bot_page==8||g_bot_page==15)?u8"< Sesli AI":((g_bot_page==10||g_bot_page==11||g_bot_page==12)?u8"< Geliştirici":u8"< Genel AI menüsü"),content,key_height,[]{g_bot_page=(g_bot_page==6||g_bot_page==7||g_bot_page==8||g_bot_page==15)?1:((g_bot_page==10||g_bot_page==11||g_bot_page==12)?9:-1);InvalidateKeys();});
     switch(g_bot_page){
     case 9:{
         if(!s.developer_unlocked){
@@ -601,22 +600,6 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
         ActionKey("GMM Connect",content,key_height,[]{g_bot_page=10;InvalidateKeys();});
         ActionKey("Kickle",content,key_height,[]{g_bot_page=11;InvalidateKeys();});
         ActionKey("GitHub Kontrol",content,key_height,[]{g_bot_page=12;InvalidateKeys();});
-        ActionKey("Oyuncu Siniri",content,key_height,[]{g_bot_page=13;InvalidateKeys();});
-        break;
-    }
-    case 13:{
-        if(!s.developer_unlocked){g_bot_page=9;break;}
-        const auto r=room_limit_bridge::Read();
-        static uint64_t generation=~uint64_t(0);static int limit=20;
-        if(generation!=r.generation){generation=r.generation;limit=r.limit>=1&&r.limit<=255?r.limit:20;}
-        ImGui::TextWrapped("Oyuncu Siniri | 1-255");
-        if(r.in_room)ImGui::TextWrapped("Oyuncu: %d / %d | Host: #%d | Sen: #%d",r.count,r.limit,r.master_actor,r.local_actor);
-        ImGui::TextWrapped("%s",r.status.c_str());
-        if(!r.is_host)ImGui::TextWrapped("Yalniz gercek Photon MasterClient uygulayabilir.");
-        ImGui::SetNextItemWidth(content);ImGui::SliderInt("##room_limit_stable",&limit,1,255,"%d oyuncu");TrackSlider();
-        ImGui::BeginDisabled(!r.ready||!r.in_room||!r.is_host||r.busy||limit<r.count);
-        ActionKey("Oyuncu sinirini uygula",content,key_height,[chosen=limit,generation=r.generation]{room_limit_bridge::Apply(chosen,generation);InvalidateKeys();});
-        ImGui::EndDisabled();
         break;
     }
     case 12:{
@@ -726,7 +709,7 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
         ImGui::TextWrapped("METİN AI - diğer AI türü açıksa otomatik kapatılır.");
         ImGui::BeginDisabled(!s.chat_ready);
         ActionKey(s.enabled?"Metin AI: AÇIK - kapat":"Metin AI: KAPALI - aç",content,key_height,[enabled=!s.enabled]{
-            if(enabled){voice_ai_bridge::Enable(false);chat_bot_bridge::VoiceFx(false);}
+            if(enabled){voice_ai_bridge::Enable(false);}
             chat_bot_bridge::Enable(enabled);InvalidateKeys();},s.enabled);
         ImGui::EndDisabled();
         ActionKey(s.all?"Herkes: AÇIK":"Herkes: KAPALI",content,key_height,[]{chat_bot_bridge::ToggleAll();InvalidateKeys();},s.all);
@@ -746,7 +729,7 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
             if(enabled&&!has_key){chat_bot_bridge::BeginEdit(chat_bot_bridge::Edit::Key);InvalidateKeys();return;}
             if(enabled&&!ready){voice_ai_bridge::Enable(true);InvalidateKeys();return;}
             if(enabled)chat_bot_bridge::Enable(false);
-            voice_ai_bridge::Enable(enabled);chat_bot_bridge::VoiceFx(enabled);InvalidateKeys();},v.settings.enabled);
+            voice_ai_bridge::Enable(enabled);InvalidateKeys();},v.settings.enabled);
         ActionKey("Kendi mesajımı yaz",content,key_height,[]{chat_bot_bridge::BeginEdit(chat_bot_bridge::Edit::Speech);InvalidateKeys();});
         const auto saved=voice_ai_bridge::SpeechText();if(!saved.empty()){
             ImGui::BeginDisabled(!v.settings.enabled);ActionKey("Mesajı seslendir",content,key_height,[saved]{voice_ai_bridge::Speak(saved);InvalidateKeys();});ImGui::EndDisabled();

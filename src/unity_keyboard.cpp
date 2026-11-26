@@ -17,7 +17,6 @@
 #include "seda_assets.h"
 #include "storage_access.h"
 #include "photo_transport.h"
-#include "room_limit.h"
 #include "chat_shortcut.h"
 #include "chat_send_gate.h"
 #include "native_shortcuts.h"
@@ -538,7 +537,6 @@ void Update(Object* self, const Method* method) {
     }
     if(!g_editing.load()){chat_bot::Pump(g_api);auto_join::Pump(g_api);}
     photo_transport::Pump(g_api,loading);
-    room_limit::Pump(g_api,loading);
 }
 EGLBoolean SwapBuffers(EGLDisplay display, EGLSurface surface) {
     if (eglGetCurrentContext() != EGL_NO_CONTEXT && eglGetCurrentSurface(EGL_DRAW) == surface) {

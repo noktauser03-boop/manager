@@ -28,14 +28,14 @@ struct Fake {
  std::vector<std::unique_ptr<Object>> objects;std::map<Class*,Type> types;std::map<Handle,Object*> roots;Handle next=0;
  Object *current_room{},*manager{},*input{};Class *messages{},*managers{},*strings{},*arrays{},*players{};
  std::vector<Object*> chat_lines,others;std::vector<std::string> sent,sent_names;
- bool allowed=true,focused=false,panel=false,native_missing=false,open_secure=false;int kb_status=1,opens=0,closes=0;std::string own="Bot",kb_text="TEST_KEY",open_text;
+ bool allowed=true,focused=false,panel=false,native_missing=false,open_secure=false,normalize_status_once=false,retain_status_once=false;int kb_status=1,opens=0,closes=0;std::string own="Bot",kb_text="TEST_KEY",open_text;
  Class* C(const std::string& ns,const std::string& name){auto& c=classes[{ns,name}];if(!c){c=std::make_unique<Class>();c->ns=ns;c->name=name;}return c.get();}
  Object* O(Class* c){auto o=std::make_unique<Object>();o->klass=c;auto* p=o.get();objects.push_back(std::move(o));return p;}
  Object* S(const std::string& s){auto* o=O(strings);o->text=test_utf::FromUtf8(s);return o;}
  Object* B(bool b){auto* o=O(C("System","Boolean"));o->flag=b;return o;}
  Object* I(int n){auto* o=O(C("System","Int32"));o->number=n;return o;}
  Fake(){
-  fake=this;chat_bot_bridge::Take();chat_bot_bridge::Publish({});http_calls=0;
+  fake=this;chat_bot_bridge::Take();chat_bot_bridge::Publish({});voice_ai_bridge::Publish({});http_calls=0;
   chat_send_gate::status_alias_ready=true;
   strings=C("System","String");arrays=C("System","Array");players=C("Photon.Realtime","Player");
   messages=C("","ChatMessage");managers=C("","ChatManager");manager=O(managers);input=O(C("TMPro","TMP_InputField"));
@@ -95,7 +95,7 @@ Object* Invoke(const Method* m,void* self,void** args,Object** error){
  if(name=="get_NickName")return o?o:fake->S(fake->own);
  if(name=="get_isFocused")return fake->B(fake->focused);
  if(name=="get_text")return fake->S(test_utf::ToUtf8(o->text));
- if(name=="set_text"){o->text=static_cast<Object*>(args[0])->text;return nullptr;}
+ if(name=="set_text"){o->text=static_cast<Object*>(args[0])->text;if(fake->normalize_status_once&&o==fake->input&&!o->text.empty()){fake->normalize_status_once=false;o->text+=u" ";}return nullptr;}
  if(name=="SendMessage"){
   chat_send_gate::StatusSend display;
   assert(chat_send_gate::automatic_send); // every bot/terminal send must bypass draft restoration
@@ -103,7 +103,7 @@ Object* Invoke(const Method* m,void* self,void** args,Object** error){
   auto* alias=chat_send_gate::active_status_alias?GetRoot(chat_send_gate::active_status_alias):nullptr;
   fake->sent_names.push_back(alias?test_utf::ToUtf8(alias->text):fake->own);
   const auto text=test_utf::ToUtf8(fake->input->text);assert(!chat_bot_core::IsSkipReply(text,"Ali"));
-  fake->sent.push_back(text);fake->input->text.clear();return nullptr;
+  fake->sent.push_back(text);if(fake->retain_status_once)fake->retain_status_once=false;else fake->input->text.clear();return nullptr;
  }
  assert(false&&"Unexpected managed call");return nullptr;
 }
@@ -289,13 +289,29 @@ int main(){
   const auto before=h.f.sent.size();chat_bot_bridge::SetMode(1);
   for(int i=0;i<20;++i){h.Step();}
   assert(h.f.sent.size()==before);
-  chat_bot_bridge::VoiceFx(true);for(int i=0;i<20;++i){h.Step();}
+  voice_ai_bridge::Snapshot v;v.settings.enabled=true;voice_ai_bridge::Publish(v);
+  for(int i=0;i<20;++i){h.Step();}
   assert(h.f.sent.size()==before);
   chat_bot_bridge::ToggleCool();h.Step();assert(chat_bot_bridge::Read().cool);
-  chat_bot_bridge::VoiceFx(true);for(int i=0;i<24;++i)h.Step();
-  assert(h.f.sent.size()>before);
+  v.settings.enabled=false;voice_ai_bridge::Publish(v);h.Step();
+  v.settings.enabled=true;voice_ai_bridge::Publish(v);h.Step();
+  v.settings.enabled=false;voice_ai_bridge::Publish(v);h.Step();
+  for(int i=0;i<75;++i)h.Step();
+  assert(h.f.sent.size()==before+2*chat_bot_fx::Lines(chat_bot_fx::Event::VoiceStop,"",false).size()+chat_bot_fx::Lines(chat_bot_fx::Event::VoiceStart,"",true).size());
+  const auto has=[&](const std::string& line){return std::count(h.f.sent.begin(),h.f.sent.end(),line);};
+  assert(has(chat_bot_fx::Lines(chat_bot_fx::Event::VoiceStart,"",true).back())==1);
+  assert(has(chat_bot_fx::Lines(chat_bot_fx::Event::VoiceStop,"",false).back())==2);
   for(size_t i=before;i<h.f.sent_names.size();++i)assert(h.f.sent_names[i]=="System");
  }
+ // One normalized terminal line must not leave the input occupied or block later lines.
+ {Harness h;chat_bot_bridge::ToggleStrict();h.Step();h.f.normalize_status_once=true;
+  chat_bot_bridge::Toggle();h.Step();for(int i=0;i<30;++i)h.Step();
+  assert(h.f.input->text.empty());assert(h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).size()-1);
+  assert(h.f.sent.back()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).back());}
+ // Ambiguous completed send: clear our own text and never dispatch it twice.
+ {Harness h;chat_bot_bridge::ToggleStrict();h.Step();h.f.retain_status_once=true;
+  chat_bot_bridge::Toggle();h.Step();for(int i=0;i<30;++i)h.Step();
+  assert(h.f.input->text.empty());assert(h.f.sent==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false));}
  // Addressed messages keep the true sender.
  {Harness h;
   assert(chat_bot_bridge::Read().room_name=="Deneme Odasi");

@@ -80,8 +80,6 @@ build/tests/room_vote_test
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -I src tests/developer_lock_test.cpp -o build/tests/developer_lock_test
 build/tests/developer_lock_test
 build/tests/photo_transfer_security_test
-"${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -I src tests/developer_lock_test.cpp -o build/tests/developer_lock_test
-build/tests/developer_lock_test
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I src tests/message_gate_test.cpp -o build/tests/message_gate_test
 build/tests/message_gate_test
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I src -pthread tests/voice_ai_core_test.cpp -o build/tests/voice_ai_core_test
@@ -103,8 +101,6 @@ build/tests/kick_protocol_test
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -I src tests/github_repo_status_test.cpp -o build/tests/github_repo_status_test
 build/tests/github_repo_status_test
 
-"${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -I src tests/room_limit_test.cpp -o build/tests/room_limit_test
-build/tests/room_limit_test
 
 "${CXX:-g++}" -std=c++17 -Wall -Wextra -Werror -I src -pthread tests/soundboard_favorites_test.cpp -o build/tests/soundboard_favorites_test
 build/tests/soundboard_favorites_test
