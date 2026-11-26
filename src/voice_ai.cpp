@@ -247,14 +247,14 @@ struct Runtime {
   if(!can_send||!chat_send||!input_text||!input_set||!input_focus||!room_id||reinterpret_cast<uintptr_t>(a.Call(current_room))!=room_id)return false;
   Root chat(a);bool ambiguous=false;Each(chat_class,[&](Object* o){if(!Active(o))return;if(chat.Get()&&chat.Get()!=o)ambiguous=true;chat.Set(o);});if(!chat.Get()||ambiguous)return false;
   bool allowed=false;a.field_get_value(chat.Get(),can_send,&allowed);if(!allowed)return false;Root input(a,Ref(chat.Get(),"inputField"));if(!Alive(input.Get())||a.Value<bool>(input_focus,input.Get(),true))return false;
-  Root old(a,a.Call(input_text,input.Get()));if(!old.Get()||!a.Utf8(reinterpret_cast<String*>(old.Get())).empty())return false;
+  Root old(a,a.Call(input_text,input.Get()));if(!old.Get())return false;const auto previous=a.Utf8(reinterpret_cast<String*>(old.Get()));if(!previous.empty()&&!chat_send_gate::IsRetained(input.Get(),previous))return false;
   Root text(a,reinterpret_cast<Object*>(a.string_new(line.c_str())));if(!text.Get())return false;
   void* args[]={text.Get()};bool ok=false;a.Call(input_set,input.Get(),args,&ok);
   Root applied(a,a.Call(input_text,input.Get()));
   if(!ok||!applied.Get()||a.Utf8(reinterpret_cast<String*>(applied.Get()))!=line){void* reset[]={old.Get()};a.Call(input_set,input.Get(),reset);__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice caption input rejected");return true;}
   {chat_send_gate::AutomaticSend automatic;a.Call(chat_send,chat.Get(),nullptr,&ok);}
   Root after(a,a.Call(input_text,input.Get()));const bool confirmed=ok&&after.Get()&&a.Utf8(reinterpret_cast<String*>(after.Get())).empty();
-  if(after.Get()&&!a.Utf8(reinterpret_cast<String*>(after.Get())).empty()){void* reset[]={old.Get()};a.Call(input_set,input.Get(),reset);}
+  if(!previous.empty()||(after.Get()&&!a.Utf8(reinterpret_cast<String*>(after.Get())).empty())){void* reset[]={old.Get()};a.Call(input_set,input.Get(),reset);}
   // Once a dispatch was attempted, do not retry an ambiguous send.
   __android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice caption dispatch confirmed=%d",int(confirmed));return true;
  }
@@ -287,7 +287,8 @@ struct Runtime {
   q.others.clear();
   auto& queue=q.pcm.empty()?requests:asr_queue;
   if(!queue.empty()&&Merge(queue.back(),q))return;
-  if(queue.size()>=6) queue.pop_front();
+  const size_t limit=q.pcm.empty()?8:12;
+  if(queue.size()>=limit){__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice backlog drop stage=%s",q.pcm.empty()?"AI":"ASR");queue.pop_front();}
   queue.push_back(std::move(q));
  }
 #if defined(__ANDROID__)
@@ -365,7 +366,7 @@ public:
    selection_active=false;awaiting_selection=Request{};snap.selection_text.clear();snap.selection_name.clear();
   }
   capture=valid&&settings.enabled&&settings.input!=1&&room_id;
-  {std::lock_guard<std::mutex> l(segments_mutex);segments.Flush(now);Utterance utterance;while(segments.Take(utterance)){if(!settings.enabled||settings.input==1)continue;Request q;q.actor=utterance.actor;q.name=utterance.name;q.pcm=std::move(utterance.samples);Queue(std::move(q));}}
+  {std::lock_guard<std::mutex> l(segments_mutex);segments.Flush(now);Utterance utterance;while(segments.Take(utterance)){if(!settings.enabled||settings.input==1)continue;Request q;q.actor=utterance.actor;q.name=utterance.name;q.pcm=std::move(utterance.samples);q.forced=utterance.forced;if(q.forced)__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice segment forced actor=%d samples=%zu",q.actor,q.pcm.size());Queue(std::move(q));}}
   if(settings.enabled&&settings.input!=0)for(auto& t:texts)if(t.room==room_id&&t.name!=cfg.own_name){Request q;q.name=std::move(t.name);q.text=std::move(t.text);q.gate_checked=true;q.instant=t.instant;q.instant_reply=std::move(t.instant_reply);Queue(std::move(q));}
   if(settings.enabled&&room_id)for(auto& t:speaks){Request q;q.speak=true;q.voice=true;q.text=chat_bot_core::PrefixScalars(t,300);q.epoch=epoch;q.room=room_id;q.name=cfg.own_name;q.tone=voice_ai_bridge::tone.load();if(tts_queue.size()<6)tts_queue.push_back(std::move(q));}
   Result recognized;
@@ -394,6 +395,8 @@ public:
     ){auto speech=std::move(audio_out.front());audio_out.pop_front();const bool played=Play(speech.audio,now);QueueCaption(speech.caption,now);if(!played)snap.status="Ses oynatılamadı; metin sohbete sıraya alındı.";}
   Result result;if(worker.Poll(result)&&result.epoch==epoch&&result.room==room_id&&settings.enabled){
    __android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice result actor=%d http=%d skipped=%d audio_samples=%zu AI_ms=%d model=%s",result.actor,result.code,result.skipped,result.audio.samples.size(),int((now-ai_started)*1000),result.model.c_str());
+   voice_ai_bridge::ReportModels(room_id,std::move(result.attempted_models));
+   if(result.reply.empty())__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice no reply http=%d skipped=%d gate=%d",result.code,int(result.skipped),int(result.gate_reason));
    if(result.actor==0||snap.heard.empty())snap.heard=chat_bot_core::PrefixScalars(result.heard,120);
    snap.reply=chat_bot_core::PrefixScalars(result.reply,160);snap.status=result.status;
    if(result.await_selection){

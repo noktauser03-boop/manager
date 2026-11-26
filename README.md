@@ -21,7 +21,7 @@ Model ilk kullanımda APK assets içinden uygulamanın özel `files/gmm_seda` di
 - Beş modelin sırası `src/chat_bot_engine.h` içindedir. Zaman aşımı veya hatada sonraki modele geçilir; model dinlendirme süresi yoktur.
 - Myinstants, AI kapalıyken de kullanılabilir. Favoriler yerel dosyaya kaydedilir. Myinstants ses durdurma düğmesi AI seslendirme kuyruğuna müdahale etmez.
 - Oda ses yayını, oyunun ses kanalının açık ve bağlı olmasını gerektirir. Sesli özellikleri odadakilerin bilgisiyle kullan. Çevrim içi servislerin model erişimi, kotası ve yanıt süreleri garanti edilmez.
-- Cool Mod yalnızca dekoratif durum satırlarını yönetir. Her olay iki kısa satırla, gerçek gönderen adı ve oyunun normal sohbet sınırlarıyla bildirilir. Büyük ekranı kaplayan biçimlendirme kaldırıldı. Sesli AI metinleri dekoratif satırlardan önceliklidir. Metin ve sesli AI durumları ayrı bildirilir. Bir satır reddedilirse veya gönderim doğrulanamazsa kuyruk ilerler; kullanıcı taslağının üzerine yazılmaz. Oda değişince ve Cool Mod kapatılınca eski durum kuyruğu temizlenir.
+- Cool Mod yalnızca dekoratif durum satırlarını yönetir. Her olay tek kısa, tamamlanmış satırla, gerçek gönderen adı ve oyunun normal sohbet sınırlarıyla bildirilir. Büyük ekranı kaplayan biçimlendirme kaldırıldı. Sesli AI metinleri dekoratif satırlardan önceliklidir. Metin ve sesli AI durumları ve model geçişleri ortak kuyrukta ayrı bildirilir. Model sırası değişmedi. Gönderim çağrısı ile sohbette görülen yankı ayrı loglanır; belirsiz gönderimler tekrar edilmez. Yalnız daha önce gönderilip geri konmuş taslak geçici olarak ayrılır ve aynen geri yüklenir. Oda değişince ve Cool Mod kapatılınca eski durum kuyruğu temizlenir.
 
 ## Yerel testler
 
@@ -56,3 +56,5 @@ Kapsamlı kayıt için `tools/Collect-GmmDiagnostics.ps1`, çökme için `tools/
 - `tools/`: tanılama, model kurulum ve mevcut ABI referansları.
 
 Askıya alınan 255 oyuncu limiti ve artık kullanılmayan robotik DSP filtresi bu sürümde derlemeye dahil değildir. Önceki sürümlerin kaynakları kendi ZIP arşivlerinde saklanır.
+
+Sürekli konuşma yaklaşık 4 saniyelik bağımsız ses parçalarına ayrılır; 3 anlamlı kelime şartı ve sessizlikle doğal sonlandırma korunur. ASR ve Gemini işleyicileri bağımsızdır; yoğunlukta kuyruk sınırlıdır.

@@ -114,7 +114,13 @@ class Controller {
     uintptr_t status_room=0;
     uint64_t status_revision=0;
     std::string status_model;
-    void ClearStatus(){++status_revision;status_lines.clear();status_room=0;}
+    struct StatusEcho {std::string line;double deadline;};
+    std::deque<StatusEcho> status_echoes;
+    void ObserveModels(const std::vector<std::string>& models){
+        for(const auto& model:models){if(model==status_model)continue;const auto it=std::find(chat_bot_engine::kModels.begin(),chat_bot_engine::kModels.end(),model);if(it==chat_bot_engine::kModels.end())continue;
+            const bool changed=!status_model.empty();status_model=model;if(changed)QueueStatus(chat_bot_fx::Event::Model,std::to_string(std::distance(chat_bot_engine::kModels.begin(),it)+1));}
+    }
+    void ClearStatus(){++status_revision;status_lines.clear();status_echoes.clear();status_room=0;}
     void QueueStatus(chat_bot_fx::Event event,const std::string& detail={},int explicit_active=-1) {
         if(!cool||!active_room){BOT_LOG("GMM_DIAG cool event=%d skipped enabled=%d room=%d",int(event),int(cool),int(active_room!=0));return;}
         const auto lines=chat_bot_fx::Lines(event,detail,explicit_active>=0 ? (explicit_active==1) : (enabled||voice_ai_bridge::Read().settings.enabled));
@@ -132,79 +138,49 @@ class Controller {
         status_deadline=now_+chat_bot_fx::kTimeout;status_room=active_room;
         BOT_LOG("GMM_DIAG cool event=%d queued=%zu",int(event),status_lines.size());
     }
-    bool SendStatusLine(const std::string& line) {
-        Root owner(api,ChatOwner());if(!owner.Get())return false;
+    enum class StatusSendResult { Wait, Rejected, Invoked };
+    const char* status_wait_reason="unknown";
+    StatusSendResult SendStatusLine(const std::string& line) {
+        Root owner(api,StatusOwner());if(!owner.Get()){status_wait_reason="no unique active chat";return StatusSendResult::Wait;}
         Object* field=nullptr;api.field_get_value(owner.Get(),input_field,&field);
-        Root input(api,field);if(!input.Get()||!IsAlive(input.Get()))return false;
+        Root input(api,field);if(!input.Get()||!IsAlive(input.Get())){status_wait_reason="input unavailable";return StatusSendResult::Wait;}
         bool ok=false;auto* focused=api.Call(input_focused,input.Get(),nullptr,&ok);
-        if(!ok||!focused||*static_cast<bool*>(api.object_unbox(focused)))return false;
-        if(!chat_bot_core::Trim(ReadString(input_text,input.Get(),ok)).empty()||!ok)return false;
+        if(!ok||!focused||*static_cast<bool*>(api.object_unbox(focused))){status_wait_reason="input focused or unreadable";return StatusSendResult::Wait;}
+        const auto previous=ReadString(input_text,input.Get(),ok);
+        if(!ok||(!previous.empty()&&!chat_send_gate::IsRetained(input.Get(),previous))){status_wait_reason="unsent draft or unreadable input";return StatusSendResult::Wait;}
         bool allowed=false;api.field_get_value(owner.Get(),allowed_field,&allowed);
-        if(!allowed)return false; // respect the game chat cooldown
-        Root text(api,reinterpret_cast<Object*>(api.string_new(line.c_str())));
-        if(!text.Get())return false;
+        if(!allowed){status_wait_reason="game cooldown";return StatusSendResult::Wait;}
+        Root text(api,reinterpret_cast<Object*>(api.string_new(line.c_str()))),old(api,reinterpret_cast<Object*>(api.string_new(previous.c_str())));
+        if(!text.Get()||!old.Get()){status_wait_reason="string allocation";return StatusSendResult::Wait;}
+        auto restore=[&]{void* args[]={old.Get()};api.Call(input_set,input.Get(),args);};
         void* args[]={text.Get()};api.Call(input_set,input.Get(),args,&ok);
-        if(!ok){
-            // The input was empty before this attempt; clean up a partially
-            // applied setter rather than leave the queue blocked by our text.
-            bool read_ok=false;const auto partial=ReadString(input_text,input.Get(),read_ok);
-            if(read_ok&&!partial.empty()){
-                Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
-                if(empty.Get())api.Call(input_set,input.Get(),reset);
-            }
-            BOT_LOG("GMM_DIAG cool status setter failed");
-            return true;
-        }
-        const auto applied=ReadString(input_text,input.Get(),ok);
-        if(!ok||applied!=line){
-            // TMP may normalize rich text or reject the assigned value. Never
-            // leave a bot-owned fragment in the input and block the entire queue.
-            if(ok&&!applied.empty()){
-                Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
-                if(empty.Get())api.Call(input_set,input.Get(),reset);
-            }
-            BOT_LOG("GMM_DIAG cool status line rejected before send");
-            return true; // discard the invalid decorative line, not later status lines
-        }
-        bool sent=false,attempted=true;
-        {chat_send_gate::AutomaticSend automatic;api.Call(send,owner.Get(),nullptr,&sent);}
-        bool read_ok=false;const auto after=ReadString(input_text,input.Get(),read_ok);
-        if(read_ok&&after==line){
-            Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
-            if(empty.Get()) {
-                api.Call(input_set,input.Get(),reset);
-            }
-            if(attempted)BOT_LOG("GMM_DIAG cool status input retained after send; no duplicate retry");
-            return attempted;
-        }
-        if(!sent||!read_ok||!after.empty()){
-            // A managed call may already have dispatched the message. Do not
-            // retry an ambiguous invocation, which can produce duplicates.
-            if(read_ok&&!after.empty()){
-                Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
-                if(empty.Get())api.Call(input_set,input.Get(),reset);
-            }
-            BOT_LOG("GMM_DIAG cool status send unconfirmed");
-            return true;
-        }
-        recent_sent.push_back(chat_bot_core::StripTags(line));while(recent_sent.size()>12)recent_sent.pop_front();
-        return true;
+        bool read_ok=false;const auto applied=ReadString(input_text,input.Get(),read_ok);
+        if(!ok||!read_ok||chat_bot_core::Trim(applied)!=line){restore();BOT_LOG("GMM_DIAG cool input rejected before send");return StatusSendResult::Rejected;}
+        bool invoked=false;{chat_send_gate::AutomaticSend automatic;api.Call(send,owner.Get(),nullptr,&invoked);}
+        const auto after=ReadString(input_text,input.Get(),read_ok);
+        if(!previous.empty()||!read_ok||!after.empty())restore();
+        BOT_LOG("GMM_DIAG cool invoke=%d input_cleared=%d",int(invoked),int(read_ok&&after.empty()));
+        // A send attempt is not server delivery. Never repeat an ambiguous call.
+        return StatusSendResult::Invoked;
     }
     void PumpStatus(double now) {
+        while(!status_echoes.empty()&&now>status_echoes.front().deadline){BOT_LOG("GMM_DIAG cool visible echo not observed");status_echoes.pop_front();}
         if(status_lines.empty())return;
         if(now>status_deadline){BOT_LOG("GMM_DIAG cool status queue expired (%zu remaining)",status_lines.size());ClearStatus();return;}
         if(now<status_next)return;
-        if(!outbox.empty()||!delegate_outbox.empty()||voice_ai_bridge::caption_pending.load())return;
+        if(!outbox.empty()||!delegate_outbox.empty()||voice_ai_bridge::caption_pending.load()){if(now>=status_log_next){status_log_next=now+3;BOT_LOG("GMM_DIAG cool waiting reason=reply priority pending=%zu",status_lines.size());}return;}
         if(!api.Value<bool>(queue,nullptr,false))return;
         Root current(api,api.Call(room));
         const auto id=reinterpret_cast<uintptr_t>(current.Get());
         if(!id||(status_room&&status_room!=id)){ClearStatus();return;}
         status_room=id;
         const auto revision=status_revision;const std::string line=status_lines.front();
-        if(SendStatusLine(line)&&revision==status_revision){
+        const auto sent=SendStatusLine(line);
+        if(sent!=StatusSendResult::Wait&&revision==status_revision){
+            if(sent==StatusSendResult::Invoked){if(status_echoes.size()>=16)status_echoes.pop_front();status_echoes.push_back({line,now+8});}
             status_lines.pop_front();status_deadline=now+chat_bot_fx::kTimeout;status_next=now+chat_bot_fx::kInterval;
-            BOT_LOG("GMM_DIAG cool dispatched remaining=%zu",status_lines.size());
-        }else{status_next=now+.25;if(now>=status_log_next){status_log_next=now+3;BOT_LOG("GMM_DIAG cool waiting for ordinary chat readiness pending=%zu",status_lines.size());}}
+            BOT_LOG("GMM_DIAG cool %s remaining=%zu",sent==StatusSendResult::Invoked?"attempted":"rejected",status_lines.size());
+        }else{status_next=now+.25;if(now>=status_log_next){status_log_next=now+3;BOT_LOG("GMM_DIAG cool waiting reason=%s pending=%zu",status_wait_reason,status_lines.size());}}
     }
 
     std::string ConfigPath() {
@@ -322,7 +298,7 @@ class Controller {
         snap.players = names;snap.delegate_players=std::move(aliases);delegate_hosts=std::move(roles);
         if (enabled && !all && !selected.empty()) {
             const bool any = std::any_of(selected.begin(), selected.end(), [&](const std::string& n) { return std::find(names.begin(), names.end(), n) != names.end(); });
-            if (!any) { enabled = false; InvalidateReplies(); reminder.Reset(); Status(u8"AI | Seçilen oyuncuların hiçbiri odada değil; bot kapatıldı."); }
+            if (!any) { enabled = false; InvalidateReplies(); reminder.Reset(); QueueStatus(chat_bot_fx::Event::Stop);Status(u8"AI | Seçilen oyuncuların hiçbiri odada değil; bot kapatıldı."); }
         }
     }
     void Status(const std::string& s) { snap.status = s; }
@@ -361,6 +337,9 @@ class Controller {
         // Keep a bounded, exact UTF-8 copy for one-tap local clipboard access.
         // This still works without broad storage permission; disk logging does not.
         for(const auto& line:fresh){
+            const auto plain=chat_bot_core::StripTags(line.raw);
+            const auto echo=std::find_if(status_echoes.begin(),status_echoes.end(),[&](const StatusEcho& pending){return plain.find(pending.line)!=std::string::npos;});
+            if(echo!=status_echoes.end()){BOT_LOG("GMM_DIAG cool visible echo observed");status_echoes.erase(echo);}
             snap.raw_messages.push_back(line.raw);
             if(snap.raw_messages.size()>30)snap.raw_messages.erase(snap.raw_messages.begin());
         }
@@ -477,6 +456,14 @@ class Controller {
         Object* o = At(array.Get(), 0);
         return IsAlive(o) ? o : nullptr;
     }
+    Object* StatusOwner() {
+        Root array(api,Array(chat_manager_class));
+        const int n=array.Get()?Count(array.Get()):-1;
+        if(n<1||n>16)return nullptr;
+        Object* found=nullptr;
+        for(int i=0;i<n;++i){Object* o=At(array.Get(),i);if(!IsAlive(o)||!api.Value<bool>(active,o,false))continue;if(found)return nullptr;found=o;}
+        return found;
+    }
     // true: işlem bitti (gönderildi ya da vazgeçildi); false: sonra tekrar dene.
     bool TrySend(double now) {
         // Last defence: no control marker can be sent even if a future caller
@@ -489,29 +476,26 @@ class Controller {
         if (now - outbox_since > kOutboxTimeout) { Status(u8"AI | Cevap gönderilemedi (sohbet beklemede/odakta)."); DropOutbox(); return false; }
         Root owner(api, ChatOwner()); if (!owner.Get()) return false;
         bool allowed = false; api.field_get_value(owner.Get(), allowed_field, &allowed);
-        if (!chat_send_gate::Available(allowed)) return false;
+        if (!allowed) return false;
         Object* tmp = nullptr; api.field_get_value(owner.Get(), input_field, &tmp);
         Root input(api, tmp); if (!input.Get() || !IsAlive(input.Get())) return false;
         bool ok = false;
         auto* focused = api.Call(input_focused, input.Get(), nullptr, &ok);
         if (!ok || !focused || *static_cast<bool*>(api.object_unbox(focused))) return false; // kullanıcı yazıyor
-        if (!chat_bot_core::Trim(ReadString(input_text, input.Get(), ok)).empty() || !ok) return false; // taslağı ezme
-        Root text(api, reinterpret_cast<Object*>(api.string_new(outbox.front().c_str())));
-        void* args[] = {text.Get()};
-        api.Call(input_set, input.Get(), args, &ok);
-        if (!ok) return false;
-        bool invoked=false;
-        {chat_send_gate::AutomaticSend automatic;api.Call(send, owner.Get(), nullptr, &invoked);}
-        const std::string after = ReadString(input_text, input.Get(), ok);
-        if (ok && after == outbox.front()) { // gönderilmedi (alan temizlenmedi): taslağı geri al
-            Root empty(api, reinterpret_cast<Object*>(api.string_new(""))); void* a2[] = {empty.Get()};
-            api.Call(input_set, input.Get(), a2, &ok);
-            return false;
-        }
+        const auto previous=ReadString(input_text,input.Get(),ok);
+        if(!ok||(!previous.empty()&&!chat_send_gate::IsRetained(input.Get(),previous)))return false; // unsent draft stays untouched
+        Root text(api,reinterpret_cast<Object*>(api.string_new(outbox.front().c_str()))),old(api,reinterpret_cast<Object*>(api.string_new(previous.c_str())));
+        if(!text.Get()||!old.Get())return false;
+        auto restore=[&]{void* args[]={old.Get()};api.Call(input_set,input.Get(),args);};
+        void* args[]={text.Get()};api.Call(input_set,input.Get(),args,&ok);
+        if(!ok){restore();return false;}
+        bool read_ok=false;const auto applied=ReadString(input_text,input.Get(),read_ok);
+        if(!read_ok||chat_bot_core::Trim(applied)!=outbox.front()){restore();Status(u8"AI | Mesaj kutusu yanıtı kabul etmedi.");gap_until=now+kChunkGap;return true;}
+        bool invoked=false;{chat_send_gate::AutomaticSend automatic;api.Call(send,owner.Get(),nullptr,&invoked);}
+        const std::string after=ReadString(input_text,input.Get(),ok);
+        if(!previous.empty()||!ok||!after.empty())restore();
         if(!invoked||!ok||!after.empty()){
-            Status(u8"AI | Gönderim doğrulanamadı; tekrar gönderilmedi.");
-            gap_until=now+kChunkGap;
-            return true;
+            Status(u8"AI | Gönderim doğrulanamadı; tekrar gönderilmedi.");gap_until=now+kChunkGap;return true;
         }
         snap.last_out = chat_bot_core::PrefixScalars(outbox.front(), 60);
         recent_sent.push_back(outbox.front()); while (recent_sent.size() > 12) recent_sent.pop_front();
@@ -618,7 +602,7 @@ class Controller {
             else if (enabled) { enabled = false; InvalidateReplies(); reminder.Reset(); Status(u8"AI | Bot kapalı."); QueueStatus(chat_bot_fx::Event::Stop); }
             else if (key.empty()) Status(u8"AI | Önce API anahtarını gir.");
             else if (!all && selected.empty()) Status(u8"AI | Önce kişi seç ya da \"Herkes\"i aç.");
-            else { enabled = true; baseline = false; InvalidateReplies(); reminder.Reset(); Status(u8"AI | Bot açık; yeni mesajlar bekleniyor."); status_model=engine.Model();QueueStatus(chat_bot_fx::Event::Start,status_model); }
+            else { enabled = true; baseline = false; InvalidateReplies(); reminder.Reset(); Status(u8"AI | Bot açık; yeni mesajlar bekleniyor."); status_model.clear();QueueStatus(chat_bot_fx::Event::Start); }
         }
         if(c.lock_developer){dev_lock.Lock();photo_gate.Lock();photo_status=u8"Geliştirici bölümü kilitlendi.";}
         if(photo_command.lock){photo_gate.Lock();photo_status=u8"Fotoğraf alma kilitlendi.";}
@@ -660,7 +644,7 @@ public:
         else snap.room_name.clear();
         if(!current_room.Get()){
             logged_room=0;logged_ids.clear();next_chat_log=0;snap.raw_messages.clear();
-            ClearStatus();voice_announced=false;active_room=0;
+            ClearStatus();status_model.clear();voice_ai_bridge::TakeModels();voice_announced=false;active_room=0;
             Commands();PollEdit();
             voice_ai_bridge::Configure({key,System(),own_name,all,strict,selected,message_filter});
             snap.players.clear();snap.delegate_players.clear();snap.room_name.clear();delegate_name.clear();delegate_outbox.clear();reminder.Reset();active_room=0;
@@ -672,7 +656,7 @@ public:
         // saved value is never dereferenced or sent across threads.
         const auto room_id=reinterpret_cast<uintptr_t>(current_room.Get());
         if(active_room&&active_room!=room_id){
-            ClearStatus();voice_announced=false;delegate_outbox.clear();delegate_name.clear();
+            ClearStatus();status_model.clear();voice_announced=false;delegate_outbox.clear();delegate_name.clear();
             InvalidateReplies();reminder.Reset();baseline=false;seen.clear();logged_ids.clear();
             engaged.clear();talking.clear();last_accept.clear();last_smalltalk.clear();last_warning.clear();next_warning=0;history.clear();
         }
@@ -682,7 +666,8 @@ public:
         const bool voice_on=voice_ai_bridge::Read().settings.enabled;
         const bool route_voice=voice_ai_bridge::RoutesText();
         if(enabled&&voice_on){enabled=false;InvalidateReplies();reminder.Reset();QueueStatus(chat_bot_fx::Event::Stop);Status(u8"AI | Sesli AI açıldı; Metin AI kapatıldı.");}
-        if(voice_on!=voice_announced){voice_announced=voice_on;QueueStatus(voice_on?chat_bot_fx::Event::VoiceStart:chat_bot_fx::Event::VoiceStop,{},voice_on?1:0);}
+        if(voice_on!=voice_announced){if(voice_on)status_model.clear();voice_announced=voice_on;QueueStatus(voice_on?chat_bot_fx::Event::VoiceStart:chat_bot_fx::Event::VoiceStop,{},voice_on?1:0);}
+        for(const auto& report:voice_ai_bridge::TakeModels())if(report.room==room_id&&voice_on)ObserveModels(report.attempts);
         if(route_voice!=voice_routed){InvalidateReplies();baseline=false;voice_routed=route_voice;}
         LogVisibleChat(room_id);
         if(!delegate_name.empty()&&std::find(snap.delegate_players.begin(),snap.delegate_players.end(),delegate_name)==snap.delegate_players.end()&&now>=next_players){delegate_name.clear();delegate_outbox.clear();}
@@ -695,8 +680,9 @@ public:
             chat_bot_engine::Result r;
             if (engine.Poll(r)) {
                 if(request_generation!=reply_generation){Status(u8"AI | Eski oturumun yanıtı atlandı.");}
-                else if (r.ok) {
-                    if(r.model!=status_model){status_model=r.model;QueueStatus(chat_bot_fx::Event::Model,status_model);}
+                else {
+                    ObserveModels(r.attempted_models);
+                    if (r.ok) {
                     const auto whole=chat_bot_core::PrepareReply(r.text,static_cast<size_t>(words),request_sender);
                     if(whole.empty()){
                         if(!history.empty()&&!history.back().model)history.pop_back();
@@ -709,6 +695,7 @@ public:
                     }
                 } else if (r.empty) { Status(u8"AI | Model cevap vermedi (süzgeç/boş); mesaj atlandı."); next_request = now + kMinGap; }
                 else { Status(u8"AI | Tüm modeller hata verdi (HTTP " + std::to_string(r.code) + u8"). Anahtarı/ağı kontrol et."); next_request = now; }
+                }
             }
             if(outbox_reminder&&(!pending.empty()||engine.Busy()))DropOutbox();
             if (!outbox.empty() && now >= gap_until && TrySend(now)) {

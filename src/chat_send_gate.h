@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <string>
 #include "il2cpp_runtime.h"
 namespace chat_send_gate {
 // True only after the local ChatManager.SendMessage hook was installed.
@@ -8,6 +9,10 @@ inline std::atomic<bool> ready{false};
 // Never write Photon player properties or the account nickname.
 inline std::atomic<bool> status_alias_ready{false};
 inline thread_local bool automatic_send=false;
+inline thread_local il2cpp::Object* retained_input=nullptr; // compared only, never dereferenced
+inline thread_local std::string retained_text;
+inline void RememberRetained(il2cpp::Object* input,const std::string& text){retained_input=input;retained_text=text;}
+inline bool IsRetained(il2cpp::Object* input,const std::string& text){return input&&input==retained_input&&!text.empty()&&text==retained_text;}
 struct AutomaticSend {
     bool previous;
     AutomaticSend():previous(automatic_send){automatic_send=true;}

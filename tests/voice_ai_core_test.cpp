@@ -49,11 +49,11 @@ int main(){
  {Segmenter g;Utterance u;std::vector<float> quiet(320,0.f);int t=0;auto speak=[&](int n){for(int i=0;i<n;++i,++t){auto f=VoiceFrame(t);g.Push(6,"C",f.data(),f.size(),16000,1,t*.02);}};auto pause=[&](int n){for(int i=0;i<n;++i,++t)g.Push(6,"C",quiet.data(),quiet.size(),16000,1,t*.02);};
   speak(75);pause(25);speak(75);g.Flush(t*.02+1);assert(g.Take(u)&&u.samples.size()>=16000*3.4&&!g.Take(u));
   speak(75);pause(75);speak(75);g.Flush(t*.02+1);assert(g.Take(u)&&g.Take(u)&&!g.Take(u));}
- // --- 12 s cap: one clip of exactly 12 s, handed over without waiting for silence ----------------------------
- {Segmenter g;Utterance u;for(int i=0;i<650;++i){auto f=VoiceFrame(i);g.Push(3,"B",f.data(),f.size(),16000,1,i*.02);}assert(g.Take(u)&&u.samples.size()==kMaxSamples&&u.samples.size()==16000*12);}
+ // --- 4 s cap: continuous speech delivers multiple clips without waiting for silence ----------------------------
+ {Segmenter g;Utterance u;for(int i=0;i<650;++i){auto f=VoiceFrame(i);g.Push(3,"B",f.data(),f.size(),16000,1,i*.02);}for(int i=0;i<3;++i){assert(g.Take(u)&&u.forced&&u.samples.size()==kSegmentSamples);}assert(!g.Take(u));g.Flush(15);assert(g.Take(u)&&!u.forced&&u.samples.size()==16000);}
  // --- Requests queued while the AI is busy merge into one clip (max 12 s) ---------------------------------
  {Request a,b;a.actor=b.actor=4;a.epoch=b.epoch=1;a.room=b.room=9;a.pcm.assign(16000*3,.1f);b.pcm.assign(16000*2,.1f);assert(Merge(a,b)&&a.pcm.size()==16000*5+4800);
-  Request c=a;c.actor=5;assert(!Merge(a,c));Request big;big.actor=4;big.epoch=1;big.room=9;big.pcm.assign(16000*8,.1f);assert(!Merge(a,big));}
+  Request c=a;c.actor=5;assert(!Merge(a,c));Request big;big.actor=4;big.epoch=1;big.room=9;big.pcm.assign(16000*8,.1f);assert(!Merge(a,big));b.forced=true;assert(!Merge(a,b));}
  // Myinstants parser: fixed host, traversal rejected.
  {auto sounds=myinstants::Parse(R"HTML(<button onclick="play('/media/sounds/vine.mp3','x')"></button><a class="instant-link">Vine &amp; Boom</a><button onclick="play('/media/sounds/%2e%2e.mp3')"></button>)HTML");assert(sounds.size()==1&&sounds[0].title=="Vine & Boom"&&myinstants::Encode("a b")=="a%20b"&&!myinstants::ValidPath("https://evil.example/a.mp3"));}
  // --- Own message: spoken directly (TTS + tone), zero HTTP / AI requests -------------------------------------------
@@ -85,5 +85,5 @@ int main(){
  q.history.clear();q.text="Bot kapı nerede?";q.canceled=std::make_shared<std::atomic<bool>>(true);calls=0;r=Run(Http,q);assert(r.skipped&&calls==0);
  q.canceled->store(false);cancel_after_http=q.canceled;r=Run(Http,q);assert(r.skipped&&r.reply.empty()&&calls==1);cancel_after_http.reset();q.canceled.reset();
  voice_ai_bridge::desired={};voice_ai_bridge::Mode(99,-1);assert(voice_ai_bridge::desired.input==2&&voice_ai_bridge::desired.output==0);voice_ai_bridge::desired={};
- std::cout<<"Voice core: PCM/WAV/base64 validation, short-phrase VAD/resampling, local ASR-to-shared-gate-to-text-only-AI, greeting shortcut, switchable filters, noise/click/tone gate, 12 s cap, queue merge, TTS and echo handling: PASS\n";
+ std::cout<<"Voice core: PCM/WAV/base64 validation, short-phrase VAD/resampling, local ASR-to-shared-gate-to-text-only-AI, greeting shortcut, switchable filters, noise/click/tone gate, 4 s continuous chunks, queue merge, TTS and echo handling: PASS\n";
 }

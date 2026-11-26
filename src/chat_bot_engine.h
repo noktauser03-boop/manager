@@ -21,7 +21,7 @@ inline constexpr int kModelTimeoutMs=10000;
 struct Result {
     bool ok=false, empty=false, all_failed=false;
     int code=0; long long retry_ms=0;
-    std::string text,model;
+    std::string text,model;std::vector<std::string> attempted_models;
 };
 struct Pool {
     std::atomic<size_t> last{0};
@@ -51,6 +51,7 @@ inline Result Generate(HttpFn http,const std::shared_ptr<Pool>& pool,const std::
         if(canceled&&canceled->load())break;
         const std::string model=kModels[i];
         bool idle=false;if(!pool->in_flight[i].compare_exchange_strong(idle,true))continue;
+        r.attempted_models.push_back(model);
         struct Attempt{bool sent=false;int code=0;std::string response;};
         auto promise=std::make_shared<std::promise<Attempt>>();auto future=promise->get_future();
         const auto body=chat_bot_core::BuildRequest(system,history,model,tokens);

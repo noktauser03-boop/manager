@@ -103,6 +103,7 @@ int main() {
     e.Reset(); calls = 0; fail_models = 2; fail_code = 429;
     e.Submit("s", {{false, "x"}}, "K");
     assert(Wait(e, r) && r.ok && calls == 3 && r.model == chat_bot_engine::kModels[2] && e.Model() == chat_bot_engine::kModels[2]);
+    assert(r.attempted_models==(std::vector<std::string>{chat_bot_engine::kModels[0],chat_bot_engine::kModels[1],chat_bot_engine::kModels[2]}));
     // 503 aynı modeli tekrar denemeden sonraki modele geçer
     e.Reset(); calls = 0; fail_models = 1; fail_code = 503;
     e.Submit("s", {{false, "x"}}, "K");
@@ -259,7 +260,7 @@ int main() {
     clock.Update(302,true,true,2,"",true);assert(!clock.Due(10000));
     for(auto event:{chat_bot_fx::Event::Start,chat_bot_fx::Event::Stop,chat_bot_fx::Event::Profile,chat_bot_fx::Event::Model,chat_bot_fx::Event::VoiceStart,chat_bot_fx::Event::VoiceStop}){
         const auto lines=chat_bot_fx::Lines(event,"test-model",true);
-        assert(lines.size()==2&&lines.front().find("[Cool Mod] $ ")==0);
+        assert(lines.size()==1&&lines.front().find("Cool Mod - ")==0);
         assert((lines.size()-1)*chat_bot_fx::kInterval<chat_bot_fx::kTimeout);
         for(const auto& line:lines)assert(ScalarCount(line)<=200);
     }

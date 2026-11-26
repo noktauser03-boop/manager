@@ -313,12 +313,26 @@ int main(){
  // One normalized terminal line must not leave the input occupied or block later lines.
  {Harness h;chat_bot_bridge::ToggleStrict();h.Step();h.f.normalize_status_once=true;
   chat_bot_bridge::Toggle();h.Step();for(int i=0;i<30;++i)h.Step();
-  assert(h.f.input->text.empty());assert(h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).size()-1);
-  assert(h.f.sent.back()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).back());}
+  assert(h.f.input->text.empty());assert(h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).size());
+  assert(chat_bot_core::Trim(h.f.sent.back())==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).back());}
  // Ambiguous completed send: clear our own text and never dispatch it twice.
  {Harness h;chat_bot_bridge::ToggleStrict();h.Step();h.f.retain_status_once=true;
   chat_bot_bridge::Toggle();h.Step();for(int i=0;i<30;++i)h.Step();
   assert(h.f.input->text.empty());assert(h.f.sent==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false));}
+ // A previously sent manual draft is not an unsent draft: preserve it exactly.
+ {Harness h;chat_bot_bridge::ToggleStrict();h.Step();h.f.input->text=u"previous manual message";
+  chat_send_gate::RememberRetained(h.f.input,"previous manual message");
+  chat_bot_bridge::Toggle();h.Step();for(int i=0;i<12;++i)h.Step();
+  assert(h.f.input->text==u"previous manual message"&&h.f.sent==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false));
+  chat_send_gate::RememberRetained(nullptr,"");}
+ // Voice failover reports are room-bound and use the same Cool queue.
+ {Harness h;chat_bot_bridge::ToggleStrict();h.Step();
+  voice_ai_bridge::Snapshot v;v.settings.enabled=true;voice_ai_bridge::Publish(v);h.Step();
+  for(int i=0;i<12;++i){h.Step();}h.f.sent.clear();
+  voice_ai_bridge::ReportModels(reinterpret_cast<uintptr_t>(h.f.current_room),{chat_bot_engine::kModels[0],chat_bot_engine::kModels[1],chat_bot_engine::kModels[1],chat_bot_engine::kModels[2]});
+  voice_ai_bridge::ReportModels(123,{chat_bot_engine::kModels[4]});
+  for(int i=0;i<20;++i)h.Step();
+  assert(h.f.sent.size()==2&&h.f.sent[0]==chat_bot_fx::Lines(chat_bot_fx::Event::Model,"2",true).front()&&h.f.sent[1]==chat_bot_fx::Lines(chat_bot_fx::Event::Model,"3",true).front());}
  // Addressed messages keep the true sender.
  {Harness h;
   assert(chat_bot_bridge::Read().room_name=="Deneme Odasi");

@@ -18,8 +18,8 @@ inline std::vector<std::string> Lines(Event event,const std::string& detail,bool
         const std::string label=detail==u8"İmam"?u8"İMAM":detail==u8"Anı"?"ANI":detail=="Normal"?"NORMAL":detail==u8"Özel"?u8"ÖZEL":u8"YENİ";
         status=u8"MODEL: "+label+(enabled?u8" | AI AKTİF":u8" | AI KAPALI");break;
     }
-    case Event::Model: command="auroractl engine switch"; status=u8"AI MODELİ GÜNCELLENDİ";break;
+    case Event::Model: command="auroractl engine switch"; status=u8"AI MODELİ GÜNCELLENDİ";if(!detail.empty()&&detail.size()==1&&detail[0]>='1'&&detail[0]<='5')status+=" #"+detail;break;
     }
-    return {"[Cool Mod] $ "+command,u8"[Cool Mod] [ OK ] "+status};
+    return {"Cool Mod - "+command+" | "+status};
 }
 }

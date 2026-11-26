@@ -381,6 +381,7 @@ void SendChat(Object* self,const Method* method) {
             if(old_text.Get()){
                 void* args[]={old_text.Get()};bool write_ok=false;
                 g_api.Call(m.setText,field.Get(),args,&write_ok);
+                if(write_ok)chat_send_gate::RememberRetained(field.Get(),draft);
                 if(write_ok&&Target()==field.Get()){
                     g_applied=draft;
                     keyboard_bridge::ReconcileText(after.c_str(),draft.c_str());

@@ -13,8 +13,12 @@ struct Settings { bool enabled=false, manual_keywords=false;int input=0,output=1
 struct Snapshot {Settings settings;bool ready=false,network_ready=false,busy=false,speaking=false,mic_blocked=false;unsigned streams=0;int active_actor=0;std::vector<std::pair<int,std::string>> players;std::string status="Sesli AI kapalı.",heard,reply,selection_text,selection_name;};
 struct Config {std::string key,system,own_name;bool all=false,strict=true;std::vector<std::string> selected;bool message_filter=true;};
 struct Text {uintptr_t room=0;std::string name,text;bool instant=false;std::string instant_reply;};
+struct ModelReport {uintptr_t room=0;std::vector<std::string> attempts;};
 inline std::atomic<bool> caption_pending{false}; // voice captions have priority over decorative chat
 inline std::mutex mutex;inline Snapshot snapshot;inline Config config;inline Settings desired;inline unsigned revision=0;inline bool cancel=false;inline std::deque<Text> texts;inline bool selection_submit=false,selection_skip=false;inline std::vector<int> selection_indices;inline std::deque<std::string> speaks;inline std::string speech_text;inline std::atomic<int> tone{50}; // 50 = natural pitch; no robot effect
+inline std::deque<ModelReport> model_reports;
+inline void ReportModels(uintptr_t room,std::vector<std::string> attempts){if(attempts.empty())return;std::lock_guard<std::mutex> l(mutex);if(model_reports.size()>=8)model_reports.pop_front();model_reports.push_back({room,std::move(attempts)});}
+inline std::deque<ModelReport> TakeModels(){std::lock_guard<std::mutex> l(mutex);std::deque<ModelReport> out;out.swap(model_reports);return out;}
 inline Snapshot Read(){std::lock_guard<std::mutex> l(mutex);return snapshot;}
 inline void Publish(Snapshot v){std::lock_guard<std::mutex> l(mutex);snapshot=std::move(v);}
 inline void Configure(Config c){std::lock_guard<std::mutex> l(mutex);config=std::move(c);}
@@ -52,7 +56,7 @@ inline void SetTone(int v){tone.store(std::clamp(v,0,100));}
 inline void SaveSpeech(std::string text){std::lock_guard<std::mutex> l(mutex);speech_text=std::move(text);} // saving never speaks
 inline std::string SpeechText(){std::lock_guard<std::mutex> l(mutex);return speech_text;}
 // Remember the typed message; speak it now if voice AI is on. Returns false when it could only be saved.
-inline bool Speak(std::string text){std::lock_guard<std::mutex> l(mutex);speech_text=text;if(text.empty()||!desired.enabled)return false;if(speaks.size()<2)speaks.push_back(std::move(text));return true;}
+inline bool Speak(std::string text){std::lock_guard<std::mutex> l(mutex);speech_text=text;if(text.empty()||!desired.enabled)return false;if(speaks.size()<2&&(speaks.empty()||speaks.back()!=text))speaks.push_back(std::move(text));return true;}
 inline void Stop(){std::lock_guard<std::mutex> l(mutex);cancel=true;++revision;}
 inline bool RoutesText(){std::lock_guard<std::mutex> l(mutex);return desired.enabled&&desired.input!=0;}
 inline void PushText(Text t){std::lock_guard<std::mutex> l(mutex);if(desired.enabled&&desired.input!=0&&texts.size()<4)texts.push_back(std::move(t));}
