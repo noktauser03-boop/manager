@@ -25,7 +25,7 @@ case 1:return O(&Node(O(args[0]))->alive);case 2:return O(n->go);case 3:return O
 case 5:return O(&n->record);case 6:OriginalRecord(O(n),*static_cast<bool*>(args[0]),nullptr);return nullptr;
 case 7:return O(&n->transmit);case 8:OriginalTransmit(O(n),*static_cast<bool*>(args[0]),nullptr);return nullptr;
 case 9:return O(&n->source);case 10:OriginalSource(O(n),*static_cast<int*>(args[0]),nullptr);return nullptr;
-case 11:return O(n->clip);case 12:n->clip=Node(O(args[0]));return nullptr;
+case 11:return O(n->clip);case 12:assert(n->source!=1||args[0]);n->clip=Node(O(args[0]));actions.push_back("clip-set");return nullptr;
 case 13:return O(&n->loop);case 14:n->loop=*static_cast<bool*>(args[0]);return nullptr;
 case 15:return O(&n->detection);case 16:n->detection=*static_cast<bool*>(args[0]);return nullptr;
 case 17:Node(O(args[0]))->alive=false;return nullptr;
@@ -62,8 +62,16 @@ int main(){
  clip.alive=true;r.clip.Set(O(&clip));source_failure=true;assert(!r.AcquireMic(true));assert(!rec.record&&!rec.transmit);source_failure=false;r.StopAudio();assert(rec.source==0&&rec.record&&rec.transmit);
  clip.alive=true;r.clip.Set(O(&clip));assert(r.AcquireMic(true));N next_room{&unity_class};room_ptr=&next_room;r.StopAudio();assert(!rec.record&&!rec.transmit); // stale room never reopens microphone
  room_ptr=&room;
+ // A microphone recorder has no prior AudioClip. Change source before clearing it.
+ rec.source=0;rec.clip=nullptr;rec.record=rec.transmit=true;clip.alive=true;r.clip.Set(O(&clip));assert(r.AcquireMic(true));
+ r.StopAudio();assert(rec.source==0&&rec.clip==nullptr&&rec.record&&rec.transmit);
+ // If the game requested clip mode but no old clip exists, fail closed, no mic reopening.
+ clip.alive=true;r.clip.Set(O(&clip));assert(r.AcquireMic(true));voice_ai::SourceHook(O(&rec),1,nullptr);r.StopAudio();assert(rec.source==0&&rec.clip==nullptr&&!rec.record&&!rec.transmit);
+ // Captions retain their exact order, are bounded, and do not reset an existing send gap.
+ r.QueueCaption("birinci cevap",100);r.text_next=101.2;r.QueueCaption("ikinci cevap",101);assert(r.text_out.size()==2&&r.text_out.front().text=="birinci cevap"&&r.text_next==101.2&&voice_ai_bridge::caption_pending);
+ r.PumpCaption(147);assert(r.text_out.empty()&&!voice_ai_bridge::caption_pending);
  // Stopping a soundboard request must not touch AI playback or its queued jobs.
- rec.source=0;rec.clip=&old;rec.record=rec.transmit=true;clip.alive=true;r.clip.Set(O(&clip));assert(r.AcquireMic(true));r.snap.speaking=true;r.audio_out.push_back({24000,{.1f}});r.CancelSoundboard();assert(r.lease&&r.snap.speaking&&r.audio_out.size()==1);r.soundboard_playing=true;r.CancelSoundboard();assert(!r.lease&&!r.snap.speaking&&r.audio_out.size()==1&&rec.source==0&&rec.record&&rec.transmit);
+ rec.source=0;rec.clip=&old;rec.record=rec.transmit=true;clip.alive=true;r.clip.Set(O(&clip));assert(r.AcquireMic(true));r.snap.speaking=true;r.audio_out.push_back({{24000,{.1f}},"caption"});r.CancelSoundboard();assert(r.lease&&r.snap.speaking&&r.audio_out.size()==1);r.soundboard_playing=true;r.CancelSoundboard();assert(!r.lease&&!r.snap.speaking&&r.audio_out.size()==1&&rec.source==0&&rec.record&&rec.transmit);
  }
  assert(roots.empty());
  a.array_length=[](Object*)->uintptr_t{return 6400;};a.array_object_header_size=[]()->uint32_t{return offsetof(Buffer,data);};a.array_element_size=[](Class*)->int32_t{return 4;};a.class_get_element_class=[](Class* c){return CL(reinterpret_cast<C*>(c)->element);};

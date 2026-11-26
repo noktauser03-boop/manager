@@ -16,12 +16,12 @@ Model ilk kullanımda APK assets içinden uygulamanın özel `files/gmm_seda` di
 ## AI ve Myinstants
 
 - AI menüsünden API anahtarını, oyuncu seçimini, kişiliği ve filtreleri ayarla. Metin AI ve Sesli AI aynı anda etkin tutulmaz.
-- Sesli AI: SEDA yerel tanıma, Gemini metin üretimi ve Android TTS seslendirme ayrı işleyiciler kullanır. Ses girdisi için en az üç anlamlı kelime kontrolü vardır. Gemini'ye ham ses değil, işlenen metin gönderilir.
+- Sesli AI: SEDA yerel tanıma, Gemini metin üretimi ve Android TTS seslendirme ayrı işleyiciler kullanır. Sesli cevap metni oynatma başlarken sohbet kuyruğuna alınır; sohbet beklemedeyse normal gönderim izni beklenir. Ses üretimi/oynatımı başarısız olursa metin yine sıraya alınır. Ses girdisi için en az üç anlamlı kelime kontrolü vardır. Gemini'ye ham ses değil, işlenen metin gönderilir.
 - Otomatik konuşmacı seçimi erişilebilir uzak ses akışlarını ayrı işler. Manuel oyuncu seçimi, ses türü, okuma hızı ve ses tonu ayarları mevcuttur. Türkçe TTS ses paketinin cihazda yüklü olması gerekir.
 - Beş modelin sırası `src/chat_bot_engine.h` içindedir. Zaman aşımı veya hatada sonraki modele geçilir; model dinlendirme süresi yoktur.
 - Myinstants, AI kapalıyken de kullanılabilir. Favoriler yerel dosyaya kaydedilir. Myinstants ses durdurma düğmesi AI seslendirme kuyruğuna müdahale etmez.
 - Oda ses yayını, oyunun ses kanalının açık ve bağlı olmasını gerektirir. Sesli özellikleri odadakilerin bilgisiyle kullan. Çevrim içi servislerin model erişimi, kotası ve yanıt süreleri garanti edilmez.
-- Cool Mod yalnızca dekoratif durum satırlarını yönetir. Metin ve sesli AI durumları ayrı bildirilir. Bir satır reddedilirse veya gönderim doğrulanamazsa kuyruk ilerler; kullanıcı taslağının üzerine yazılmaz. Oda değişince ve Cool Mod kapatılınca eski durum kuyruğu temizlenir.
+- Cool Mod yalnızca dekoratif durum satırlarını yönetir. Her olay iki kısa satırla, gerçek gönderen adı ve oyunun normal sohbet sınırlarıyla bildirilir. Büyük ekranı kaplayan biçimlendirme kaldırıldı. Sesli AI metinleri dekoratif satırlardan önceliklidir. Metin ve sesli AI durumları ayrı bildirilir. Bir satır reddedilirse veya gönderim doğrulanamazsa kuyruk ilerler; kullanıcı taslağının üzerine yazılmaz. Oda değişince ve Cool Mod kapatılınca eski durum kuyruğu temizlenir.
 
 ## Yerel testler
 

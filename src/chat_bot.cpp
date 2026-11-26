@@ -110,18 +110,18 @@ class Controller {
     }
 
     std::deque<std::string> status_lines;
-    double status_next=0,status_deadline=0;
+    double status_next=0,status_deadline=0,status_log_next=0;
     uintptr_t status_room=0;
     uint64_t status_revision=0;
     std::string status_model;
     void ClearStatus(){++status_revision;status_lines.clear();status_room=0;}
     void QueueStatus(chat_bot_fx::Event event,const std::string& detail={},int explicit_active=-1) {
-        if(!cool||!active_room)return;
+        if(!cool||!active_room){BOT_LOG("GMM_DIAG cool event=%d skipped enabled=%d room=%d",int(event),int(cool),int(active_room!=0));return;}
         const auto lines=chat_bot_fx::Lines(event,detail,explicit_active>=0 ? (explicit_active==1) : (enabled||voice_ai_bridge::Read().settings.enabled));
         if(status_room!=active_room)ClearStatus();
         // Keep transitions in order. Never replace a partially sent sequence.
         // Bound decorative traffic; keep the newest final state if saturated.
-        constexpr size_t max_lines=80;
+        constexpr size_t max_lines=16;
         if(status_lines.size()+lines.size()>max_lines){
             if(event==chat_bot_fx::Event::Model||event==chat_bot_fx::Event::Profile)return;
             ClearStatus();
@@ -130,9 +130,9 @@ class Controller {
         ++status_revision;status_lines.insert(status_lines.end(),lines.begin(),lines.end());
         if(was_empty)status_next=now_;
         status_deadline=now_+chat_bot_fx::kTimeout;status_room=active_room;
+        BOT_LOG("GMM_DIAG cool event=%d queued=%zu",int(event),status_lines.size());
     }
     bool SendStatusLine(const std::string& line) {
-        if(!chat_send_gate::status_alias_ready.load(std::memory_order_acquire))return false;
         Root owner(api,ChatOwner());if(!owner.Get())return false;
         Object* field=nullptr;api.field_get_value(owner.Get(),input_field,&field);
         Root input(api,field);if(!input.Get()||!IsAlive(input.Get()))return false;
@@ -140,9 +140,7 @@ class Controller {
         if(!ok||!focused||*static_cast<bool*>(api.object_unbox(focused)))return false;
         if(!chat_bot_core::Trim(ReadString(input_text,input.Get(),ok)).empty()||!ok)return false;
         bool allowed=false;api.field_get_value(owner.Get(),allowed_field,&allowed);
-        if(!allowed&&!api.field_set_value)return false; // old runtimes retain ordinary cooldown
-        Root alias(api,reinterpret_cast<Object*>(api.string_new("System")));
-        if(!alias.Get())return false;
+        if(!allowed)return false; // respect the game chat cooldown
         Root text(api,reinterpret_cast<Object*>(api.string_new(line.c_str())));
         if(!text.Get())return false;
         void* args[]={text.Get()};api.Call(input_set,input.Get(),args,&ok);
@@ -168,25 +166,8 @@ class Controller {
             BOT_LOG("GMM_DIAG cool status line rejected before send");
             return true; // discard the invalid decorative line, not later status lines
         }
-        // This guard exists only around this one status SendMessage call. No
-        // timer is disabled and normal replies never receive an override.
-        bool sent=false,attempted=false;
-        {
-            struct Permission {
-                const Api& api;Object* owner;Field* field;bool old,changed=false;
-                Permission(const Api& a,Object* o,Field* f,bool before):api(a),owner(o),field(f),old(before){
-                    if(!old&&api.field_set_value){changed=true;bool yes=true;api.field_set_value(owner,field,&yes);}
-                }
-                ~Permission(){if(changed)api.field_set_value(owner,field,&old);}
-            } permission(api,owner.Get(),allowed_field,allowed);
-            bool permitted=false;api.field_get_value(owner.Get(),allowed_field,&permitted);
-            if(permitted){
-                attempted=true;
-                chat_send_gate::AutomaticSend automatic;
-                chat_send_gate::StatusAlias display(alias.handle);
-                api.Call(send,owner.Get(),nullptr,&sent);
-            }
-        }
+        bool sent=false,attempted=true;
+        {chat_send_gate::AutomaticSend automatic;api.Call(send,owner.Get(),nullptr,&sent);}
         bool read_ok=false;const auto after=ReadString(input_text,input.Get(),read_ok);
         if(read_ok&&after==line){
             Root empty(api,reinterpret_cast<Object*>(api.string_new("")));void* reset[]={empty.Get()};
@@ -213,16 +194,17 @@ class Controller {
         if(status_lines.empty())return;
         if(now>status_deadline){BOT_LOG("GMM_DIAG cool status queue expired (%zu remaining)",status_lines.size());ClearStatus();return;}
         if(now<status_next)return;
-        if((!outbox.empty()||!delegate_outbox.empty())&&now>=gap_until)return;
+        if(!outbox.empty()||!delegate_outbox.empty()||voice_ai_bridge::caption_pending.load())return;
         if(!api.Value<bool>(queue,nullptr,false))return;
         Root current(api,api.Call(room));
         const auto id=reinterpret_cast<uintptr_t>(current.Get());
         if(!id||(status_room&&status_room!=id)){ClearStatus();return;}
-        status_room=id;status_next=now+chat_bot_fx::kInterval;
+        status_room=id;
         const auto revision=status_revision;const std::string line=status_lines.front();
         if(SendStatusLine(line)&&revision==status_revision){
-            status_lines.pop_front();status_deadline=now+chat_bot_fx::kTimeout;
-        }
+            status_lines.pop_front();status_deadline=now+chat_bot_fx::kTimeout;status_next=now+chat_bot_fx::kInterval;
+            BOT_LOG("GMM_DIAG cool dispatched remaining=%zu",status_lines.size());
+        }else{status_next=now+.25;if(now>=status_log_next){status_log_next=now+3;BOT_LOG("GMM_DIAG cool waiting for ordinary chat readiness pending=%zu",status_lines.size());}}
     }
 
     std::string ConfigPath() {
@@ -667,7 +649,7 @@ public:
         if (!initialized) {
             initialized = true;
             LoadConfig();
-            if (!Resolve()) { disabled = true; snap.chat_ready = false; snap.status = u8"AI | Oyun sınıfı bulunamadı: " + issue; chat_bot_bridge::Publish(snap); return; }
+            if (!Resolve()) { BOT_LOG("GMM_DIAG cool controller bindings unavailable");disabled = true; snap.chat_ready = false; snap.status = u8"AI | Oyun sınıfı bulunamadı: " + issue; chat_bot_bridge::Publish(snap); return; }
         }
         bool ok = false;
         auto* running = api.Call(queue, nullptr, nullptr, &ok);

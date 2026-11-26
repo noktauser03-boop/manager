@@ -120,7 +120,7 @@ struct Harness {
   // Finish the initial status animation before testing unrelated reply counts.
   for(int i=0;i<24;++i){now+=.2;bot.Tick(now);}
   assert(f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Start,"",true).size());
-  for(const auto& name:f.sent_names)assert(name=="System");
+  for(const auto& name:f.sent_names)assert(name=="Bot");
   now+=3;bot.Tick(now);f.sent.clear();f.sent_names.clear();}
  void Tick(double at){now=at;bot.Tick(now);assert(f.roots.empty()&&!chat_send_gate::status_alias&&!chat_send_gate::active_status_alias);}
  void Step(){Tick(now+.5);}
@@ -208,17 +208,19 @@ int main(){
   chat_bot_bridge::ToggleStrict();h.Step();
   h.f.allowed=false;chat_bot_bridge::SetMode(1);const double begin=h.now;
   for(int i=1;i<=24;++i)h.Tick(begin+i*.2);
-  assert(h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Profile,"",true).size()&&!h.f.allowed&&http_calls==0);
-  for(const auto& name:h.f.sent_names)assert(name=="System");
+  assert(h.f.sent.empty()&&!h.f.allowed&&http_calls==0); // wait for ordinary game cooldown
+  h.f.allowed=true;for(int i=0;i<12;++i)h.Step();
+  assert(h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Profile,"",true).size()&&h.f.allowed&&http_calls==0);
+  for(const auto& name:h.f.sent_names)assert(name=="Bot");
   assert(h.f.own=="Bot");h.f.sent.clear();h.f.sent_names.clear();chat_bot_bridge::Toggle();h.Step();
   const double stop=h.now;for(int i=1;i<=24;++i)h.Tick(stop+i*.2);
-  assert(!chat_bot_bridge::Read().enabled&&h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).size()&&!h.f.allowed);
-  for(const auto& name:h.f.sent_names)assert(name=="System");
+  assert(!chat_bot_bridge::Read().enabled&&h.f.sent.size()==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false).size()&&h.f.allowed);
+  for(const auto& name:h.f.sent_names)assert(name=="Bot");
  }
  {Harness h;
   chat_send_gate::status_alias_ready=false;chat_bot_bridge::Toggle();h.Step();
   for(int i=0;i<24;++i)h.Tick(h.now+.2);
-  assert(h.f.sent.empty()&&h.f.own=="Bot"); // no fallback exposing the normal name
+  assert(h.f.sent==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false)&&h.f.own=="Bot"); // no alias dependency
  }
  {Harness h;chat_bot_bridge::ToggleStrict();h.Step();
   for(const char* control:{"SKIP","Ali: SKIP","Ali, **SKIP**","Ali SKIP",u8"SKİP"}){
@@ -301,8 +303,13 @@ int main(){
   const auto has=[&](const std::string& line){return std::count(h.f.sent.begin(),h.f.sent.end(),line);};
   assert(has(chat_bot_fx::Lines(chat_bot_fx::Event::VoiceStart,"",true).back())==1);
   assert(has(chat_bot_fx::Lines(chat_bot_fx::Event::VoiceStop,"",false).back())==2);
-  for(size_t i=before;i<h.f.sent_names.size();++i)assert(h.f.sent_names[i]=="System");
+  for(size_t i=before;i<h.f.sent_names.size();++i)assert(h.f.sent_names[i]=="Bot");
  }
+ // Pending voice captions take priority, and release the decorative queue when done.
+ {Harness h;chat_bot_bridge::ToggleStrict();h.Step();voice_ai_bridge::caption_pending=true;
+  chat_bot_bridge::Toggle();h.Step();for(int i=0;i<8;++i)h.Step();assert(h.f.sent.empty());
+  voice_ai_bridge::caption_pending=false;for(int i=0;i<12;++i)h.Step();
+  assert(h.f.sent==chat_bot_fx::Lines(chat_bot_fx::Event::Stop,"",false));}
  // One normalized terminal line must not leave the input occupied or block later lines.
  {Harness h;chat_bot_bridge::ToggleStrict();h.Step();h.f.normalize_status_once=true;
   chat_bot_bridge::Toggle();h.Step();for(int i=0;i<30;++i)h.Step();
