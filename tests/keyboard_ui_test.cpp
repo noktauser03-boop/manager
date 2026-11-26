@@ -202,7 +202,12 @@ int main() {
    Direct("Metin AI");Frame();Frame();assert(Reveal("Mesaj filtresi: AÇIK"));
    Direct("Ali");auto bot_command=chat_bot_bridge::Take();assert(bot_command.select&&bot_command.name=="Ali");
    Frame();Frame();Direct(u8"< Genel AI menüsü");Frame();Frame();
-   Direct("Sesli AI");Frame();Frame();assert(Reveal("Manuel kelime seçimi: KAPALI")&&Reveal("Konuşmayı durdur"));
+   Direct("Sesli AI");Frame();Frame();
+   // Manual editor is available before AI starts and without an API key.
+   Direct("Kendi mesajımı yaz");assert(chat_bot_bridge::HasPendingVoiceEdit());assert(chat_bot_bridge::Take().edit==chat_bot_bridge::Edit::Speech);Frame();Frame();
+   bot.has_key=false;chat_bot_bridge::Publish(bot);Frame();Frame();Direct("Sesli AI: KAPALI - aç");assert(chat_bot_bridge::Take().edit==chat_bot_bridge::Edit::Key);assert(!voice_ai_bridge::desired.enabled);Frame();Frame();
+   bot.has_key=true;chat_bot_bridge::Publish(bot);Frame();Frame();
+   assert(Reveal("Manuel kelime seçimi: KAPALI")&&Reveal("Konuşmayı durdur"));
    assert(!items.count("Kişileri yenile")&&!items.count("Ses odaya gönderilir")&&!items.count("Ses yalnızca bu cihazda"));
    {Reveal("Ses tonu: 50%");bool found=false;for(const auto& [name,r]:items)if(name.find("voice_tone")!=std::string::npos||name.find("Ses tonu")!=std::string::npos){found=true;const ImVec2 c((r.Min.x+r.Max.x)*.5f,(r.Min.y+r.Max.y)*.5f);const bool consumed=keyboard_ui::TouchDown(c.x,c.y);keyboard_ui::TouchUp();assert(!consumed);} // slider touch must reach ImGui, not the scroll handler
     assert(found);}

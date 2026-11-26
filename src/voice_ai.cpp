@@ -275,7 +275,10 @@ public:
  void Tick(bool paused){
   if(std::this_thread::get_id()!=unity)return;
   double now=Now();if(!initialized){initialized=true;valid=Resolve();snap.ready=valid;}
-  if(!valid){snap.status="Sesli AI: bu sürümün ses bağlantıları eksik.";voice_ai_bridge::Publish(snap);return;}
+  if(!valid){
+   {std::lock_guard<std::mutex> l(voice_ai_bridge::mutex);if(voice_ai_bridge::desired.enabled){voice_ai_bridge::desired.enabled=false;__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice enable rejected: bindings not ready");}}
+   snap.ready=false;snap.settings.enabled=false;snap.status="Sesli AI: bu sürümün ses bağlantıları eksik.";voice_ai_bridge::Publish(snap);return;
+  }
   voice_ai_bridge::Settings wanted;voice_ai_bridge::Config next_cfg;std::deque<voice_ai_bridge::Text> texts;std::deque<std::string> speaks;unsigned next_rev;bool cancel;
   bool selection_submit=false,selection_skip=false;std::vector<int> chosen;
   {std::lock_guard<std::mutex> l(voice_ai_bridge::mutex);wanted=voice_ai_bridge::desired;next_cfg=voice_ai_bridge::config;next_rev=voice_ai_bridge::revision;cancel=voice_ai_bridge::cancel;voice_ai_bridge::cancel=false;
@@ -283,14 +286,16 @@ public:
    voice_ai_bridge::selection_submit=voice_ai_bridge::selection_skip=false;
    texts.swap(voice_ai_bridge::texts);speaks.swap(voice_ai_bridge::speaks);}
   Root observed_room(a,paused?nullptr:a.Call(current_room));uintptr_t next_room=reinterpret_cast<uintptr_t>(observed_room.Get());
-  if(next_room!=room_id){Reset(room_id!=0);room_root.Set(observed_room.Get());room_id=next_room;wanted.enabled=false;{std::lock_guard<std::mutex> l(voice_ai_bridge::mutex);voice_ai_bridge::desired.enabled=false;}next_discovery=0;}
+  if(next_room!=room_id){const bool left_room=room_id!=0;Reset(left_room);room_root.Set(observed_room.Get());room_id=next_room;
+   // Preserve a tap made on the first room discovery; never carry speech to another room.
+   if(left_room){wanted.enabled=false;texts.clear();speaks.clear();}next_discovery=0;}
   bool config_changed=next_cfg.key!=cfg.key||next_cfg.system!=cfg.system||next_cfg.own_name!=cfg.own_name||next_cfg.all!=cfg.all||next_cfg.strict!=cfg.strict||next_cfg.selected!=cfg.selected||next_cfg.message_filter!=cfg.message_filter;
-  if(next_rev!=revision||config_changed||cancel){Reset(false,!cancel);revision=next_rev;settings=wanted;cfg=std::move(next_cfg);if(settings.enabled){seda_asr::WarmAsync();
+  if(next_rev!=revision||config_changed||cancel){const bool changed=settings.enabled!=wanted.enabled;Reset(false,!cancel);revision=next_rev;settings=wanted;cfg=std::move(next_cfg);if(changed)__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice requested=%d key_present=%d room_present=%d",int(settings.enabled),int(!cfg.key.empty()),int(room_id!=0));if(settings.enabled){seda_asr::WarmAsync();
 #if defined(__ANDROID__)
    static std::atomic<bool> warming{false};if(!warming.exchange(true))std::thread([]{std::string ignored;try{chat_bot_http::Speak("",ignored);}catch(...){}warming=false;}).detach();
 #endif
-  }texts.clear();speaks.clear();next_discovery=0;snap.status=settings.enabled?"Sesli AI hazır; yeni ses veya mesaj bekleniyor.":"Sesli AI kapalı.";}
-  if(settings.enabled&&(cfg.key.empty()||!room_id)){settings.enabled=false;std::lock_guard<std::mutex> l(voice_ai_bridge::mutex);voice_ai_bridge::desired.enabled=false;snap.status=cfg.key.empty()?"Önce AI bölümünden API anahtarı gir.":"Bir odaya gir.";}
+  }texts.clear();if(cancel||!settings.enabled)speaks.clear();next_discovery=0;snap.status=settings.enabled?"Sesli AI hazır; yeni ses veya mesaj bekleniyor.":"Sesli AI kapalı.";}
+  if(settings.enabled&&(cfg.key.empty()||!room_id)){__android_log_print(ANDROID_LOG_INFO,"multiplayermod","GMM_DIAG voice enable rejected: %s",cfg.key.empty()?"API key missing":"room unavailable");settings.enabled=false;std::lock_guard<std::mutex> l(voice_ai_bridge::mutex);voice_ai_bridge::desired.enabled=false;snap.status=cfg.key.empty()?"Önce AI bölümünden API anahtarı gir.":"Bir odaya gir.";}
   if(now>=next_discovery){next_discovery=now+1;Discover();}
   if(snap.speaking){
    bool invalid=now>=playing_until||(!settings.enabled&&!soundboard_playing);

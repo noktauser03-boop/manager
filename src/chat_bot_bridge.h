@@ -45,5 +45,6 @@ inline void SetWords(int w) { std::lock_guard<std::mutex> l(mutex); command.set_
 inline void ResetMemory() { std::lock_guard<std::mutex> l(mutex); command.reset_memory = true; }
 inline void Refresh() { std::lock_guard<std::mutex> l(mutex); command.refresh = true; }
 inline void BeginEdit(Edit e) { std::lock_guard<std::mutex> l(mutex); command.edit = e; }
+inline bool HasPendingVoiceEdit(){std::lock_guard<std::mutex> l(mutex);return command.edit==Edit::Speech||command.edit==Edit::Key;}
 inline Command Take() { std::lock_guard<std::mutex> l(mutex); Command c = std::move(command); command = Command{}; return c; }
 }

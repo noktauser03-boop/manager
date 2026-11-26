@@ -68,7 +68,11 @@ struct ListTouch {
 ListTouch g_list_touch,g_hub_touch;
 // ImGui sliders must receive the touch themselves; otherwise the hub/list scroll handler swallows the drag.
 std::vector<std::pair<ImVec2,ImVec2>> g_slider_rects;
-void TrackSlider(){g_slider_rects.emplace_back(ImGui::GetItemRectMin(),ImGui::GetItemRectMax());}
+void TrackSlider(){
+    ImRect hit(ImGui::GetItemRectMin(),ImGui::GetItemRectMax());
+    hit.ClipWith(ImGui::GetCurrentWindow()->ClipRect);
+    if(hit.Min.x<hit.Max.x&&hit.Min.y<hit.Max.y)g_slider_rects.emplace_back(hit.Min,hit.Max);
+}
 bool g_touching_hub=false;
 void InvalidateKeys(){g_touch_keys.clear();g_touch_repeat={};g_list_touch={};g_hub_touch={};}
 
@@ -737,14 +741,21 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
         ActionKey("Sohbet hafızasını sıfırla",content,key_height,[]{chat_bot_bridge::ResetMemory();InvalidateKeys();});break;
     }
     case 1:{
-        ImGui::TextWrapped("SESLİ AI | Otomatik mod: konuşmacılar ayrı ayrı işlenir.");
-        ImGui::TextWrapped("%s",v.status.c_str());
-        if(!v.heard.empty())ImGui::TextWrapped("Anlaşılan: %s",v.heard.c_str());
-        ImGui::BeginDisabled(!v.ready||!s.has_key);
-        ActionKey(v.settings.enabled?"Sesli AI: AÇIK - kapat":"Sesli AI: KAPALI - aç",content,key_height,[enabled=!v.settings.enabled]{
+        // Keep both primary controls above variable-height status and sliders.
+        ActionKey(v.settings.enabled?"Sesli AI: AÇIK - kapat":"Sesli AI: KAPALI - aç",content,key_height,[enabled=!v.settings.enabled,ready=v.ready,has_key=s.has_key]{
+            if(enabled&&!has_key){chat_bot_bridge::BeginEdit(chat_bot_bridge::Edit::Key);InvalidateKeys();return;}
+            if(enabled&&!ready){voice_ai_bridge::Enable(true);InvalidateKeys();return;}
             if(enabled)chat_bot_bridge::Enable(false);
             voice_ai_bridge::Enable(enabled);chat_bot_bridge::VoiceFx(enabled);InvalidateKeys();},v.settings.enabled);
-        ImGui::EndDisabled();
+        ActionKey("Kendi mesajımı yaz",content,key_height,[]{chat_bot_bridge::BeginEdit(chat_bot_bridge::Edit::Speech);InvalidateKeys();});
+        const auto saved=voice_ai_bridge::SpeechText();if(!saved.empty()){
+            ImGui::BeginDisabled(!v.settings.enabled);ActionKey("Mesajı seslendir",content,key_height,[saved]{voice_ai_bridge::Speak(saved);InvalidateKeys();});ImGui::EndDisabled();
+            ImGui::TextWrapped("Metin: %s",chat_bot_core::PrefixScalars(saved,60).c_str());
+        }
+        if(!s.has_key)ImGui::TextWrapped("API anahtarı eksik: aç düğmesi anahtar girişini açar.");
+        if(!v.ready)ImGui::TextWrapped("Ses altyapısı hazır değil: %s",v.status.c_str());
+        else ImGui::TextWrapped("%s",chat_bot_core::PrefixScalars(v.status,100).c_str());
+        if(!v.heard.empty())ImGui::TextWrapped("Anlaşılan: %s",chat_bot_core::PrefixScalars(v.heard,100).c_str());
         ActionKey(v.selection_text.empty()?"Konuşma kelimelerini seç (bekleniyor)":"Konuşma kelimelerini seç",content,key_height,[]{g_bot_page=6;InvalidateKeys();},!v.selection_text.empty());
         ActionKey("Konuşmacı seç",content,key_height,[]{g_bot_page=7;InvalidateKeys();});
         ActionKey("Konuşmayı durdur",content,key_height,[]{voice_ai_bridge::Stop();InvalidateKeys();});
@@ -756,11 +767,6 @@ void BotBody(const ImGuiIO&,float key_height,float content,float max_height){
          ImGui::TextWrapped("TTS: %s",voices.second.empty()?"hazırlanıyor":voices.second.c_str());
          ActionKey(preferred.empty()?"Ses türü: Otomatik (erkek varsa)":("Ses türü: "+preferred).c_str(),content,key_height,[]{voice_ai_bridge::RefreshVoices();g_bot_page=15;InvalidateKeys();});}
         ActionKey("Myinstants sesleri",content,key_height,[]{g_bot_page=14;InvalidateKeys();});
-        ActionKey("Kendi mesajımı yaz",content,key_height,[]{chat_bot_bridge::BeginEdit(chat_bot_bridge::Edit::Speech);InvalidateKeys();});
-        const auto saved=voice_ai_bridge::SpeechText();if(!saved.empty()){
-            ImGui::TextWrapped("Metin: %s",chat_bot_core::PrefixScalars(saved,110).c_str());
-            ImGui::BeginDisabled(!v.settings.enabled);ActionKey("Mesajı seslendir",content,key_height,[saved]{voice_ai_bridge::Speak(saved);InvalidateKeys();});ImGui::EndDisabled();
-        }
         ImGui::TextWrapped("Sesli AI yanıtı aynı zamanda sohbete yazılır. İsim filtresi Sesli AI için kapalıdır.");break;
     }
     case 15:{

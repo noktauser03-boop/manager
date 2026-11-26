@@ -201,6 +201,9 @@ class Controller {
             struct stat st{};
             if (stat(dir.c_str(), &st) == 0 || mkdir(dir.c_str(), 0700) == 0) return dir + "/gmm_ai.cfg";
         }
+#if defined(__ANDROID__)
+        const auto dir=chat_bot_http::FilesDirectory();if(!dir.empty())return dir+"/gmm_ai.cfg";
+#endif
         return {};
     }
     void LoadConfig() {
@@ -536,6 +539,7 @@ class Controller {
     }
     void BeginEdit(Edit e) {
         editing = e;
+        if(e==Edit::Speech)BOT_LOG("GMM_DIAG voice manual editor opened");
         const std::string initial = e == Edit::Persona ? custom : e == Edit::Speech ? voice_ai_bridge::SpeechText() : e == Edit::SoundSearch ? voice_ai_bridge::ReadSounds().query : std::string();
         const bool secret=e==Edit::Key||e==Edit::DeveloperUnlock;
         native_input = text_input.Open(initial,secret); // Android's own keyboard

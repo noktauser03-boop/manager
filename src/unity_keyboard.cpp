@@ -9,6 +9,7 @@
 #include "cosmetic_room.h"
 #include "gameplay.h"
 #include "chat_bot.h"
+#include "chat_bot_bridge.h"
 #include "voice_ai.h"
 #include "ad_block.h"
 #include "auto_join.h"
@@ -528,6 +529,13 @@ void Update(Object* self, const Method* method) {
     // Skip uGUI processing for the gesture that began on the keyboard, including its UP.
     // This does not globally filter arbitrary gameplay InputAction listeners.
     if (!captured) g_update(self, method);
+    // A panel editor must not remain blocked by an old TMP chat focus.
+    // Deselect without sending; leave the game's text draft untouched.
+    if(!loading&&g_editing.load()&&chat_bot_bridge::HasPendingVoiceEdit()){
+        Object* target=Target();
+        if(Alive(target)){bool clear_selection=true;void* args[]={&clear_selection};g_api.Call(m.deactivate,target,args);}
+        if(g_editing.load())End();
+    }
     if(!g_editing.load()){chat_bot::Pump(g_api);auto_join::Pump(g_api);}
     photo_transport::Pump(g_api,loading);
     room_limit::Pump(g_api,loading);
